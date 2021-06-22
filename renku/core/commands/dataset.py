@@ -103,7 +103,7 @@ def create_dataset_helper(
 def create_dataset():
     """Return a command for creating an empty dataset in the current repo."""
     command = Command().command(create_dataset_helper).lock_dataset()
-    return command.require_migration().with_commit(commit_only=DATASET_METADATA_PATHS)
+    return command.require_migration().with_database(write=True).with_commit(commit_only=DATASET_METADATA_PATHS)
 
 
 @inject.autoparams()
@@ -158,7 +158,7 @@ def _edit_dataset(
 def edit_dataset():
     """Command for editing dataset metadata."""
     command = Command().command(_edit_dataset).lock_dataset()
-    return command.require_migration().with_commit(commit_only=DATASET_METADATA_PATHS)
+    return command.require_migration().with_database(write=True).with_commit(commit_only=DATASET_METADATA_PATHS)
 
 
 @inject.autoparams()
@@ -286,7 +286,11 @@ def _add_to_dataset(
 def add_to_dataset():
     """Create a command for adding data to datasets."""
     command = Command().command(_add_to_dataset).lock_dataset()
-    return command.require_migration().with_commit(raise_if_empty=True, commit_only=DATASET_METADATA_PATHS)
+    return (
+        command.require_migration()
+        .with_database(write=True)
+        .with_commit(raise_if_empty=True, commit_only=DATASET_METADATA_PATHS)
+    )
 
 
 def _list_files(datasets=None, creators=None, include=None, exclude=None, format=None, columns=None):
@@ -355,7 +359,7 @@ def _file_unlink(name, include, exclude, client: LocalClient, yes=False):
 def file_unlink():
     """Command for removing matching files from a dataset."""
     command = Command().command(_file_unlink).lock_dataset()
-    return command.require_migration().with_commit(commit_only=DATASET_METADATA_PATHS)
+    return command.require_migration().with_database(write=True).with_commit(commit_only=DATASET_METADATA_PATHS)
 
 
 @inject.autoparams()
@@ -383,7 +387,7 @@ def _remove_dataset(name, client: LocalClient):
 def remove_dataset():
     """Command for deleting a dataset."""
     command = Command().command(_remove_dataset).lock_dataset()
-    return command.require_migration().with_commit(commit_only=DATASET_METADATA_PATHS)
+    return command.require_migration().with_database(write=True).with_commit(commit_only=DATASET_METADATA_PATHS)
 
 
 @inject.autoparams()
@@ -585,7 +589,7 @@ def _import_dataset(
 def import_dataset():
     """Create a command for importing datasets."""
     command = Command().command(_import_dataset).lock_dataset()
-    return command.require_migration().with_commit(commit_only=DATASET_METADATA_PATHS)
+    return command.require_migration().with_database(write=True).with_commit(commit_only=DATASET_METADATA_PATHS)
 
 
 @inject.autoparams()
@@ -725,7 +729,12 @@ def _update_datasets(names, creators, include, exclude, ref, delete, client: Loc
 def update_datasets():
     """Command for updating datasets."""
     command = Command().command(_update_datasets).lock_dataset()
-    return command.require_migration().require_clean().with_commit(commit_only=DATASET_METADATA_PATHS)
+    return (
+        command.require_migration()
+        .require_clean()
+        .with_database(write=True)
+        .with_commit(commit_only=DATASET_METADATA_PATHS)
+    )
 
 
 def _include_exclude(file_path, include=None, exclude=None):
@@ -808,7 +817,7 @@ def _tag_dataset(name, tag, description, client: LocalClient, force=False):
 def tag_dataset():
     """Command for creating a new tag for a dataset."""
     command = Command().command(_tag_dataset).lock_dataset()
-    return command.require_migration().with_commit(commit_only=DATASET_METADATA_PATHS)
+    return command.require_migration().with_database(write=True).with_commit(commit_only=DATASET_METADATA_PATHS)
 
 
 @inject.autoparams()
@@ -828,7 +837,7 @@ def _remove_dataset_tags(name, tags, client: LocalClient):
 def remove_dataset_tags():
     """Command for removing tags from a dataset."""
     command = Command().command(_remove_dataset_tags).lock_dataset()
-    return command.require_migration().with_commit(commit_only=DATASET_METADATA_PATHS)
+    return command.require_migration().with_database(write=True).with_commit(commit_only=DATASET_METADATA_PATHS)
 
 
 @inject.autoparams()

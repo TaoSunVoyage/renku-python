@@ -16,6 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Models representing datasets."""
+
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -29,7 +30,8 @@ from renku.core.incubation.database import Database, Index, Persistent
 from renku.core.management.command_builder.command import inject
 from renku.core.models import datasets as old_datasets
 from renku.core.models.calamus import DateTimeList, JsonLDSchema, Nested, Uri, fields, prov, renku, schema
-from renku.core.models.datasets import DatasetFileSchema, generate_dataset_file_url, is_dataset_name_valid
+from renku.core.models.datasets import generate_dataset_file_url, is_dataset_name_valid
+from renku.core.models.entities import generate_label
 from renku.core.models.entity import Entity, NewEntitySchema
 from renku.core.models.provenance.agents import Person, PersonSchema
 from renku.core.utils import communication
@@ -82,16 +84,6 @@ class Url:
             return self.url_str
         elif self.url_id:
             return {"@id": self.url_id}
-        else:
-            raise NotImplementedError("Either url_id or url_str has to be set")
-
-    @property
-    def value(self):
-        """Returns the url value as string."""
-        if self.url_str:
-            return self.url_str
-        elif self.url_id:
-            return self.url_id
         else:
             raise NotImplementedError("Either url_id or url_str has to be set")
 
@@ -194,13 +186,52 @@ class ImageObject:
         return bool(urlparse(self.content_url).netloc)
 
 
+class RemoteEntity:
+    """Reference to an Entity in a remote repo."""
+
+    def __init__(self, *, commit_sha: str, id: str = None, path: Union[Path, str], url: str):
+        self.commit_sha: str = commit_sha
+        self.id = id or RemoteEntity.generate_id(commit_sha, path)
+        self.path: str = str(path)
+        self.url = url
+
+    @staticmethod
+    def generate_id(commit_sha: str, path: Union[Path, str]) -> str:
+        """Generate an id."""
+        path = quote(str(path))
+        return f"/remote-entity/{commit_sha}/{path}"
+
+    @classmethod
+    def from_dataset_file(cls, dataset_file: Optional[old_datasets.DatasetFile]) -> Optional["RemoteEntity"]:
+        """Create an instance by converting from renku.core.models.datasets.DatasetFile."""
+        if not dataset_file:
+            return
+        commit_sha = dataset_file._label.rsplit("@", maxsplit=1)[-1]
+        return cls(commit_sha=commit_sha, path=dataset_file.path, url=dataset_file.url)
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if not isinstance(other, RemoteEntity):
+            return False
+        return self.commit_sha == other.commit_sha and self.path == other.path and self.url == other.url
+
+    def __hash__(self):
+        return hash((self.commit_sha, self.path, self.url))
+
+    def to_dataset_file(self) -> old_datasets.DatasetFile:
+        """Return an instance of renku.core.models.datasets.DatasetFile."""
+        label = generate_label(self.path, self.commit_sha)
+        return old_datasets.DatasetFile(label=label, path=self.path, source=self.url, url=self.url)
+
+
 class DatasetFile:
     """A file in a dataset."""
 
     def __init__(
         self,
         *,
-        based_on=None,
+        based_on: RemoteEntity = None,
         date_added: datetime = None,
         date_deleted: datetime = None,
         entity: Entity,
@@ -211,7 +242,7 @@ class DatasetFile:
     ):
         assert isinstance(entity, Entity), f"Invalid entity type: '{entity}'"
 
-        self.based_on = based_on
+        self.based_on: RemoteEntity = based_on
         self.date_added: datetime = fix_timezone(date_added) or local_now()
         self.date_deleted: datetime = fix_timezone(date_deleted)
         self.entity: Entity = entity
@@ -226,7 +257,7 @@ class DatasetFile:
         entity = Entity.from_revision(client=client, path=path)
         return cls(
             entity=entity,
-            # TODO: Set is_external
+            is_external=client.is_external_file(path),
             url=generate_dataset_file_url(client=client, filepath=entity.path),
         )
 
@@ -237,12 +268,12 @@ class DatasetFile:
         entity = Entity.from_revision(client=client, path=dataset_file.path, revision=revision)
 
         return cls(
-            based_on=dataset_file.based_on,  # TODO: Convert based_on
+            based_on=RemoteEntity.from_dataset_file(dataset_file.based_on),
             date_added=dataset_file.added,
             entity=entity,
             is_external=dataset_file.external,
             source=dataset_file.source,
-            url=generate_dataset_file_url(client=client, filepath=entity.path),  # TODO: Fix url
+            url=generate_dataset_file_url(client=client, filepath=entity.path),
         )
 
     @staticmethod
@@ -259,9 +290,9 @@ class DatasetFile:
 
         NOTE: id is generated randomly and should not be included in this comparison.
         """
-        # TODO: Include based_on
         return (
-            self.date_added == other.date_added
+            self.based_on == other.based_on
+            and self.date_added == other.date_added
             and self.date_deleted == other.date_deleted
             and self.entity == other.entity
             and self.is_external == other.is_external
@@ -284,7 +315,7 @@ class DatasetFile:
                 client=client,
                 revision=revision,
                 added=self.date_added,
-                based_on=self.based_on,
+                based_on=self.based_on.to_dataset_file() if self.based_on else None,
                 external=self.is_external,
                 id=None,
                 path=self.entity.path,
@@ -326,8 +357,8 @@ class Dataset(Persistent):
     ):
         if not is_dataset_name_valid(name):
             raise errors.ParameterError(f"Invalid dataset name: {name}")
-        # TODO Verify identifier to be valid
 
+        # TODO Verify identifier to be valid
         self.identifier = identifier or str(uuid4())
         self.id = id or Dataset.generate_id(identifier=self.identifier)
         self.name = name
@@ -505,7 +536,7 @@ class Dataset(Persistent):
             files=self._convert_to_dataset_files(client),
             id=None,
             identifier=self.identifier,
-            images=[image.to_image_object() for image in self.images],
+            images=[image.to_image_object() for image in self.images] if self.images else None,
             in_language=self.in_language.to_language() if self.in_language else None,
             keywords=self.keywords,
             license=self.license,
@@ -672,6 +703,22 @@ class ImageObjectSchema(JsonLDSchema):
     position = fields.Integer(schema.position)
 
 
+class RemoteEntitySchema(JsonLDSchema):
+    """RemoteEntity schema."""
+
+    class Meta:
+        """Meta class."""
+
+        rdf_type = [prov.Entity, schema.DigitalDocument]
+        model = RemoteEntity
+        unknown = EXCLUDE
+
+    commit_sha = fields.String(renku.commit_sha)
+    id = fields.Id()
+    path = fields.String(prov.atLocation)
+    url = fields.String(schema.url)
+
+
 class NewDatasetFileSchema(JsonLDSchema):
     """DatasetFile schema."""
 
@@ -682,7 +729,7 @@ class NewDatasetFileSchema(JsonLDSchema):
         model = DatasetFile
         unknown = EXCLUDE
 
-    based_on = Nested(schema.isBasedOn, DatasetFileSchema, missing=None, propagate_client=False)
+    based_on = Nested(schema.isBasedOn, RemoteEntitySchema, missing=None)
     date_added = DateTimeList(schema.dateCreated, format="iso", extra_formats=("%Y-%m-%d",))
     date_deleted = fields.DateTime(prov.invalidatedAtTime, missing=None, allow_none=True, format="iso")
     entity = Nested(prov.entity, NewEntitySchema)

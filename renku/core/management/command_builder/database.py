@@ -29,13 +29,12 @@ class DatabaseCommand(Command):
     POST_ORDER = 5
 
     def __init__(self, builder: Command, write: bool = False, path: str = None) -> None:
-        """__init__ of ProjectLock."""
         self._builder = builder
         self._write = write
         self._path = path
 
     def _pre_hook(self, builder: Command, context: dict, *args, **kwargs) -> None:
-        """Lock the project."""
+        """Create a Database singleton."""
         if "client" not in context:
             raise ValueError("Commit builder needs a LocalClient to be set.")
 
