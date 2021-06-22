@@ -47,6 +47,7 @@ from renku.core import errors
 from renku.core.management.clone import clone
 from renku.core.management.command_builder.command import replace_injected_client
 from renku.core.management.config import RENKU_HOME
+from renku.core.models.dataset import DatasetProvenance
 from renku.core.models.datasets import (
     Dataset,
     DatasetFile,
@@ -56,7 +57,6 @@ from renku.core.models.datasets import (
     is_dataset_name_valid,
 )
 from renku.core.models.provenance.agents import Person
-from renku.core.models.provenance.datasets import DatasetProvenance
 from renku.core.models.refs import LinkReference
 from renku.core.utils import communication
 from renku.core.utils.git import add_to_git, get_oauth_url, have_same_remote, run_command

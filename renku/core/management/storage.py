@@ -34,8 +34,8 @@ from werkzeug.utils import cached_property
 from renku.core import errors
 from renku.core.incubation.database import Database
 from renku.core.management.command_builder.command import inject
+from renku.core.models.dataset import DatasetProvenance
 from renku.core.models.provenance.activity import Collection
-from renku.core.models.provenance.datasets import DatasetProvenance
 from renku.core.models.provenance.provenance_graph import ProvenanceGraph
 from renku.core.utils import communication
 from renku.core.utils.file_size import parse_file_size
