@@ -563,7 +563,7 @@ class Dataset(Persistent):
 class DatasetProvenance:
     """A set of datasets."""
 
-    def __init__(self, datasets, provenance):
+    def __init__(self, datasets: Index, provenance: Index):
         # A map from name to datasets for current datasets
         self._datasets: Index = datasets
         # A map from id to datasets for all current, deleted, and previous datasets versions
@@ -572,8 +572,8 @@ class DatasetProvenance:
     @classmethod
     def from_database(cls, database: Database) -> "DatasetProvenance":
         """Return an instance from a metadata database."""
-        datasets = database.get("datasets")
-        provenance = database.get("datasets-provenance")
+        datasets = database["datasets"]
+        provenance = database["datasets-provenance"]
 
         return DatasetProvenance(datasets=datasets, provenance=provenance)
 
@@ -620,15 +620,12 @@ class DatasetProvenance:
     def remove_dataset(self, dataset, client, revision=None, date=None):
         """Remove a dataset."""
         new_dataset = Dataset.from_dataset(dataset, client, revision)
-        current_dataset = self._datasets.get(dataset.name)
+        current_dataset = self._datasets.pop(dataset.name, None)
 
         if not current_dataset:
             communication.warn(f"Deleting non-existing dataset '{dataset.name}'")
-        else:
-            if current_dataset.is_deleted():
-                communication.warn(f"Deleting an already-deleted dataset '{dataset.name}'")
-
-            self._datasets.remove(current_dataset)
+        elif current_dataset.is_deleted():
+            communication.warn(f"Deleting an already-deleted dataset '{dataset.name}'")
 
         new_dataset.delete(date)
         self._provenance.add(new_dataset)
