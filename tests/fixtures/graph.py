@@ -27,19 +27,3 @@ def client_with_new_graph(client):
     generate_graph().build().execute(force=True)
 
     yield client
-
-
-@pytest.fixture
-def datasets_provenance():
-    """A function to return DatasetsProvenance for a client."""
-    from renku.core.incubation.database import Database
-    from renku.core.models.dataset import DatasetsProvenance
-
-    def get_datasets_provenance(client):
-        """Return dataset provenance if available."""
-        assert client.has_graph_files()
-
-        database = Database.from_path(client.database_path)
-        return DatasetsProvenance.from_database(database)
-
-    return get_datasets_provenance

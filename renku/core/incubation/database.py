@@ -133,11 +133,6 @@ class Database:
     def __getitem__(self, key) -> "Index":
         return self._root[key]
 
-    @property
-    def root(self):
-        """Return the database root object."""
-        return self._root
-
     def _initialize_root(self):
         """Initialize root object."""
         if not self._root:
@@ -379,6 +374,10 @@ class Index(Persistent):
     def pop(self, key, default=MARKER):
         """Remove and return an object."""
         return self._entries.pop(key) if default is MARKER else self._entries.pop(key, default)
+
+    def keys(self):
+        """Return an iterator of keys."""
+        return self._entries.keys()
 
     def values(self):
         """Return an iterator of values."""

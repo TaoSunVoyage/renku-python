@@ -33,7 +33,7 @@ from renku.core.management.repository import DEFAULT_DATA_DIR as DATA_DIR
 from renku.core.models.datasets import Url
 from renku.core.models.provenance.agents import Person
 from renku.core.utils.contexts import chdir
-from tests.utils import assert_dataset_is_mutated
+from tests.utils import assert_dataset_is_mutated, get_datasets_provenance
 
 
 @pytest.mark.integration
@@ -1572,17 +1572,17 @@ def test_import_returns_last_dataset_version(runner, client, url):
 
 @pytest.mark.integration
 @flaky(max_runs=10, min_passes=1)
-def test_datasets_provenance_after_import(runner, client_with_new_graph, datasets_provenance):
+def test_datasets_provenance_after_import(runner, client_with_new_graph):
     """Test dataset provenance is updated after importing a dataset."""
     assert 0 == runner.invoke(cli, ["dataset", "import", "-y", "--name", "my-data", "10.7910/DVN/F4NUMR"]).exit_code
 
-    datasets_provenance = datasets_provenance(client_with_new_graph)
+    datasets_provenance = get_datasets_provenance(client_with_new_graph)
     assert datasets_provenance.get_by_name("my-data") is not None
 
 
 @pytest.mark.integration
 @flaky(max_runs=10, min_passes=1)
-def test_datasets_provenance_after_git_update(client_with_new_graph, runner, datasets_provenance):
+def test_datasets_provenance_after_git_update(client_with_new_graph, runner):
     """Test dataset provenance is updated after an update."""
     url = "https://github.com/SwissDataScienceCenter/renku-jupyter.git"
 
@@ -1591,19 +1591,19 @@ def test_datasets_provenance_after_git_update(client_with_new_graph, runner, dat
 
     assert 0 == runner.invoke(cli, ["dataset", "update"], catch_exceptions=False).exit_code
 
-    current_version = datasets_provenance(client_with_new_graph).get_by_name("my-data")
+    current_version = get_datasets_provenance(client_with_new_graph).get_by_name("my-data")
     assert current_version.identifier != current_version.original_identifier
 
 
 @pytest.mark.integration
 @flaky(max_runs=10, min_passes=1)
-def test_datasets_provenance_after_external_provider_update(client_with_new_graph, runner, datasets_provenance):
+def test_datasets_provenance_after_external_provider_update(client_with_new_graph, runner):
     """Test dataset provenance is not updated after an update from an external provider."""
     doi = "10.5281/zenodo.2658634"
     assert 0 == runner.invoke(cli, ["dataset", "import", "-y", "--name", "my-data", doi]).exit_code
 
     assert 0 == runner.invoke(cli, ["dataset", "update", "my-data"]).exit_code
 
-    current_version = datasets_provenance(client_with_new_graph).get_by_name("my-data")
+    current_version = get_datasets_provenance(client_with_new_graph).get_by_name("my-data")
 
     assert current_version.identifier != current_version.original_identifier

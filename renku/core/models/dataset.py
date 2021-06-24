@@ -30,13 +30,12 @@ from renku.core.incubation.database import Database, Index, Persistent
 from renku.core.management.command_builder.command import inject
 from renku.core.models import datasets as old_datasets
 from renku.core.models.calamus import DateTimeList, JsonLDSchema, Nested, Uri, fields, prov, renku, schema
-from renku.core.models.datasets import generate_dataset_file_url, is_dataset_name_valid
+from renku.core.models.datasets import generate_dataset_id, is_dataset_name_valid
 from renku.core.models.entities import generate_label
 from renku.core.models.entity import Entity, NewEntitySchema
 from renku.core.models.provenance.agents import Person, PersonSchema
 from renku.core.utils import communication
 from renku.core.utils.datetime8601 import fix_timezone, local_now, parse_date
-from renku.core.utils.urls import get_host
 
 
 class Url:
@@ -238,7 +237,6 @@ class DatasetFile:
         id: str = None,
         is_external: bool = False,
         source: Union[Path, str] = None,
-        url=None,
     ):
         assert isinstance(entity, Entity), f"Invalid entity type: '{entity}'"
 
@@ -249,17 +247,13 @@ class DatasetFile:
         self.id: str = id or DatasetFile.generate_id()
         self.is_external: bool = is_external
         self.source: str = str(source)
-        self.url: str = url
 
     @classmethod
     def from_path(cls, client, path: Union[str, Path]) -> "DatasetFile":
         """Return an instance from a path."""
         entity = Entity.from_revision(client=client, path=path)
-        return cls(
-            entity=entity,
-            is_external=client.is_external_file(path),
-            url=generate_dataset_file_url(client=client, filepath=entity.path),
-        )
+
+        return cls(entity=entity, is_external=client.is_external_file(path))
 
     @classmethod
     @inject.params(client="LocalClient")
@@ -273,7 +267,6 @@ class DatasetFile:
             entity=entity,
             is_external=dataset_file.external,
             source=dataset_file.source,
-            url=generate_dataset_file_url(client=client, filepath=entity.path),
         )
 
     @staticmethod
@@ -297,14 +290,13 @@ class DatasetFile:
             and self.entity == other.entity
             and self.is_external == other.is_external
             and self.source == other.source
-            and self.url == other.url
         )
 
     def delete(self, date: datetime = None):
         """Mark the file as deleted."""
         self.date_deleted = fix_timezone(date) or local_now()
 
-    def is_deleted(self):
+    def is_deleted(self) -> bool:
         """Return true if dataset is deleted and should not be accessed."""
         return self.date_deleted is not None
 
@@ -338,7 +330,7 @@ class Dataset(Persistent):
         date_created: datetime = None,
         date_deleted: datetime = None,
         date_published: datetime = None,
-        derived_from: Url = None,
+        derived_from: str = None,
         description: str = None,
         files: List[DatasetFile] = None,
         id: str = None,
@@ -352,11 +344,10 @@ class Dataset(Persistent):
         same_as: Url = None,
         tags: List[DatasetTag] = None,
         title: str = None,
-        url: str = None,
         version=None,
     ):
         if not is_dataset_name_valid(name):
-            raise errors.ParameterError(f"Invalid dataset name: {name}")
+            raise errors.ParameterError(f"Invalid dataset name: '{name}'")
 
         # TODO Verify identifier to be valid
         self.identifier = identifier or str(uuid4())
@@ -367,7 +358,7 @@ class Dataset(Persistent):
         self.date_created: datetime = fix_timezone(date_created) or local_now()
         self.date_deleted: datetime = fix_timezone(date_deleted)
         self.date_published: datetime = fix_timezone(date_published)
-        self.derived_from: Url = derived_from
+        self.derived_from: str = derived_from
         self.description: str = description
         """`files` includes existing files and those that have been deleted in the previous version."""
         self.files: List[DatasetFile] = files or []
@@ -381,7 +372,6 @@ class Dataset(Persistent):
         self.same_as: Url = same_as
         self.tags: List[DatasetTag] = tags or []
         self.title: str = title
-        self.url: str = url
         self.version = version
 
         # if `date_published` is set, we are probably dealing with an imported dataset so `date_created` is not needed
@@ -398,14 +388,12 @@ class Dataset(Persistent):
         """Create an instance by converting from renku.core.models.datasets.Dataset."""
         files = cls._convert_dataset_files(dataset.files, client, revision)
 
-        # TODO: Adapt derived_from and url
-
         self = cls(
             creators=dataset.creators,
             date_created=dataset.date_created,
             date_deleted=None,
             date_published=dataset.date_published,
-            derived_from=Url.from_url(dataset.derived_from),
+            derived_from=cls._convert_derived_from(dataset.derived_from),
             description=dataset.description,
             files=files,
             id=None,
@@ -419,11 +407,8 @@ class Dataset(Persistent):
             same_as=Url.from_url(dataset.same_as),
             tags=[DatasetTag.from_dataset_tag(tag) for tag in (dataset.tags or [])],
             title=dataset.title,
-            url=dataset.url,
             version=dataset.version,
         )
-
-        self._update_metadata(client)
 
         return self
 
@@ -442,35 +427,32 @@ class Dataset(Persistent):
 
         return dataset_files
 
+    @staticmethod
+    def _convert_derived_from(derived_from: Optional[Url]) -> Optional[str]:
+        """Return Dataset.id from `derived_from` url."""
+        if not derived_from:
+            return
+
+        url = derived_from.url.get("@id")
+        path = urlparse(url).path
+
+        return Dataset.generate_id(identifier=Path(path).name)
+
     def delete(self, date: datetime = None):
         """Mark the dataset as deleted."""
         self.date_deleted = fix_timezone(date) or local_now()
         self._p_changed = True
 
-    def is_deleted(self):
+    def is_deleted(self) -> bool:
         """Return true if dataset is deleted."""
         return self.date_deleted is not None
 
-    def find_file(self, path: Union[Path, str], return_index=False):
+    def find_file(self, path: Union[Path, str]) -> Optional[DatasetFile]:
         """Find a file in files container using its relative path."""
         path = str(path)
-        for index, file in enumerate(self.files):
+        for file in self.files:
             if file.entity.path == path and not file.is_deleted():
-                if return_index:
-                    return index
                 return file
-
-    def _update_metadata(self, client):
-        """Update relevant fields after setting a new client."""
-        self.url = self.id  # TODO: Update hostname
-
-        if self.derived_from:
-            host = get_host(client)
-            derived_from_id = self.derived_from.id
-            derived_from_url = self.derived_from.url.get("@id")
-            u = urlparse(derived_from_url)
-            derived_from_url = u._replace(netloc=host).geturl()
-            self.derived_from = Url(id=derived_from_id, url_id=derived_from_url)
 
     def copy_from(self, dataset: "Dataset"):
         """Copy metadata from another dataset."""
@@ -494,13 +476,12 @@ class Dataset(Persistent):
         self.same_as = dataset.same_as
         self.tags = dataset.tags
         self.title = dataset.title
-        self.url = dataset.url
         self.version = dataset.version
 
         self._p_changed = True
 
     def update_files_from(self, current_files: List[DatasetFile], date: datetime = None):
-        """Check `current_files` to reuse its entries and mark deleted files."""
+        """Check `current_files` to reuse existing entries and mark deleted files."""
         new_files: Dict[str, DatasetFile] = {f.entity.path: f for f in self.files if not f.is_deleted()}
         current_files: Dict[str, DatasetFile] = {f.entity.path: f for f in current_files if not f.is_deleted()}
 
@@ -525,13 +506,20 @@ class Dataset(Persistent):
 
     def to_dataset(self, client) -> old_datasets.Dataset:
         """Return an instance of renku.core.models.datasets.Dataset."""
+        if self.derived_from:
+            identifier = Path(self.derived_from).name
+            id = generate_dataset_id(client=client, identifier=identifier)
+            derived_from = old_datasets.Url(client=client, url_id=id)
+        else:
+            derived_from = None
+
         return old_datasets.Dataset(
             name=self.name,
             client=client,
             creators=self.creators,
             date_created=self.date_created,
             date_published=self.date_published,
-            derived_from=self.derived_from.to_url(client) if self.derived_from else None,
+            derived_from=derived_from,
             description=self.description,
             files=self._convert_to_dataset_files(client),
             id=None,

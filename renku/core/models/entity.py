@@ -17,6 +17,7 @@
 # limitations under the License.
 """Represent provenance entities."""
 
+import os.path
 from pathlib import Path
 from typing import List, Union
 from urllib.parse import quote
@@ -30,10 +31,11 @@ class Entity:
 
     def __init__(self, *, checksum: str, id: str = None, path: Union[Path, str]):
         assert id is None or isinstance(id, str)
+        assert not os.path.isabs(path), f"Entity is being created with absolute path: '{path}'"
 
         self.checksum: str = checksum
         self.id: str = id or Entity.generate_id(checksum, path)
-        self.path: Path = path
+        self.path: str = str(path)
 
     def __eq__(self, other):
         if self is other:

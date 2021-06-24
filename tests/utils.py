@@ -105,3 +105,14 @@ def modified_environ(*remove, **update):
     finally:
         env.update(update_after)
         [env.pop(k) for k in remove_after]
+
+
+def get_datasets_provenance(client):
+    """Return DatasetsProvenance for a client."""
+    from renku.core.incubation.database import Database
+    from renku.core.models.dataset import DatasetsProvenance
+
+    assert client.has_graph_files()
+
+    database = Database.from_path(client.database_path)
+    return DatasetsProvenance.from_database(database)
