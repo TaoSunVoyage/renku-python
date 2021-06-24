@@ -39,6 +39,7 @@ from renku.core.management.config import RENKU_HOME
 from renku.core.management.datasets import DATASET_METADATA_PATHS, DatasetsApiMixin
 from renku.core.management.migrate import migrate
 from renku.core.management.repository import RepositoryApiMixin
+from renku.core.models.dataset import DatasetsProvenance
 from renku.core.models.entities import Entity
 from renku.core.models.jsonld import load_yaml
 from renku.core.models.provenance.activities import Activity
@@ -61,8 +62,8 @@ GRAPH_METADATA_PATHS = [
 
 def generate_graph():
     """Return a command for generating the graph."""
-    command = Command().command(_generate_graph).lock_project()
-    return command.require_migration().with_database(write=True).with_commit(commit_only=GRAPH_METADATA_PATHS)
+    command = Command().command(_generate_graph).lock_project().require_migration()
+    return command.with_database(write=True, create=True).with_commit(commit_only=GRAPH_METADATA_PATHS)
 
 
 @inject.autoparams()
@@ -99,9 +100,9 @@ def _generate_graph(client: LocalClient, database: Database, force=False):
         date = commit.authored_datetime
 
         for dataset in datasets:
-            client.update_datasets_provenance(dataset, revision=revision, date=date, commit_database=False)
+            datasets_provenance.add_or_update(dataset, revision=revision, date=date)
         for dataset in deleted_datasets:
-            client.update_datasets_provenance(dataset, revision=revision, date=date, commit_database=False, remove=True)
+            datasets_provenance.remove(dataset, revision=revision, date=date, client=client)
 
     commits = list(client.repo.iter_commits(paths=[f"{client.workflow_path}/*.yaml", ".renku/datasets/*/*.yml"]))
     n_commits = len(commits)
@@ -113,6 +114,7 @@ def _generate_graph(client: LocalClient, database: Database, force=False):
         raise errors.OperationError("Graph metadata exists. Use ``--force`` to regenerate it.")
 
     client.initialize_graph()
+    datasets_provenance = DatasetsProvenance.from_database(database)
 
     for n, commit in enumerate(commits, start=1):
         communication.echo(f"Processing commits {n}/{n_commits}", end="\r")
@@ -415,6 +417,7 @@ def _add_to_dataset(
     client: LocalClient,
     urls,
     name,
+    datasets_provenance: DatasetsProvenance,
     external=False,
     force=False,
     overwrite=False,
@@ -445,7 +448,7 @@ def _add_to_dataset(
                 ref=ref,
             )
 
-        client.update_datasets_provenance(dataset)
+        datasets_provenance.add_or_update(dataset)
     except errors.DatasetNotFound:
         raise errors.DatasetNotFound(
             message=f"Dataset `{name}` does not exist.\nUse `renku dataset create {name}` to create the dataset or "

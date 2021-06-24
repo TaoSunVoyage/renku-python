@@ -560,7 +560,7 @@ class Dataset(Persistent):
         return dataset_files
 
 
-class DatasetProvenance:
+class DatasetsProvenance:
     """A set of datasets."""
 
     def __init__(self, datasets: Index, provenance: Index):
@@ -570,12 +570,12 @@ class DatasetProvenance:
         self._provenance: Index = provenance
 
     @classmethod
-    def from_database(cls, database: Database) -> "DatasetProvenance":
+    def from_database(cls, database: Database) -> "DatasetsProvenance":
         """Return an instance from a metadata database."""
         datasets = database["datasets"]
         provenance = database["datasets-provenance"]
 
-        return DatasetProvenance(datasets=datasets, provenance=provenance)
+        return DatasetsProvenance(datasets=datasets, provenance=provenance)
 
     def get_by_id(self, id: str) -> Optional[Dataset]:
         """Return a dataset by its name."""
@@ -590,7 +590,7 @@ class DatasetProvenance:
         return self._provenance.values()
 
     @inject.params(client="LocalClient")
-    def update_dataset(
+    def add_or_update(
         self,
         dataset: old_datasets.Dataset,
         client,
@@ -617,7 +617,7 @@ class DatasetProvenance:
         self._datasets.add(new_dataset)
         self._provenance.add(new_dataset)
 
-    def remove_dataset(self, dataset, client, revision=None, date=None):
+    def remove(self, dataset, client, revision=None, date=None):
         """Remove a dataset."""
         new_dataset = Dataset.from_dataset(dataset, client, revision)
         current_dataset = self._datasets.pop(dataset.name, None)

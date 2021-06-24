@@ -21,6 +21,7 @@ import shutil
 import urllib
 from collections import OrderedDict
 from pathlib import Path
+from typing import Optional
 
 import click
 import git
@@ -37,7 +38,8 @@ from renku.core.management import LocalClient
 from renku.core.management.command_builder import inject
 from renku.core.management.command_builder.command import Command
 from renku.core.management.datasets import DATASET_METADATA_PATHS
-from renku.core.models.datasets import DatasetDetailsJson, Url, generate_default_name
+from renku.core.models.dataset import DatasetsProvenance
+from renku.core.models.datasets import DatasetDetailsJson, DatasetTag, Url, generate_default_name
 from renku.core.models.provenance.agents import Person
 from renku.core.models.refs import LinkReference
 from renku.core.models.tabulate import tabulate
@@ -72,12 +74,13 @@ def list_datasets():
 def create_dataset_helper(
     name,
     client: LocalClient,
+    datasets_provenance: DatasetsProvenance,
     title=None,
     description="",
     creators=None,
     keywords=None,
     images=None,
-    safe_image_paths=[],
+    safe_image_paths=None,
 ):
     """Create a dataset in the repository."""
     if not creators:
@@ -95,7 +98,7 @@ def create_dataset_helper(
         safe_image_paths=safe_image_paths,
     )
 
-    client.update_datasets_provenance(dataset)
+    datasets_provenance.add_or_update(dataset)
 
     return dataset
 
@@ -113,10 +116,11 @@ def _edit_dataset(
     description,
     creators,
     client: LocalClient,
+    datasets_provenance: DatasetsProvenance,
     keywords=None,
-    images=[],
+    images=None,
     skip_image_update=False,
-    safe_image_paths=[],
+    safe_image_paths=None,
 ):
     """Edit dataset metadata."""
     creator_objs, no_email_warnings = _construct_creators(creators, ignore_email=True)
@@ -149,8 +153,7 @@ def _edit_dataset(
         return [], no_email_warnings
 
     dataset.to_yaml()
-
-    client.update_datasets_provenance(dataset)
+    datasets_provenance.add_or_update(dataset)
 
     return updated, no_email_warnings
 
@@ -212,6 +215,7 @@ def _add_to_dataset(
     urls,
     name,
     client: LocalClient,
+    datasets_provenance: DatasetsProvenance,
     external=False,
     force=False,
     overwrite=False,
@@ -270,7 +274,7 @@ def _add_to_dataset(
 
                 dataset.update_metadata_from(with_metadata)
 
-        client.update_datasets_provenance(dataset)
+        datasets_provenance.add_or_update(dataset)
         return dataset
     except DatasetNotFound:
         raise DatasetNotFound(
@@ -318,7 +322,7 @@ def list_files():
 
 
 @inject.autoparams()
-def _file_unlink(name, include, exclude, client: LocalClient, yes=False):
+def _file_unlink(name, include, exclude, client: LocalClient, datasets_provenance: DatasetsProvenance, yes=False):
     """Remove matching files from a dataset."""
     if not include and not exclude:
         raise ParameterError(
@@ -351,7 +355,7 @@ def _file_unlink(name, include, exclude, client: LocalClient, yes=False):
         dataset.unlink_file(item.path)
 
     dataset.to_yaml()
-    client.update_datasets_provenance(dataset)
+    datasets_provenance.add_or_update(dataset)
 
     return records
 
@@ -363,12 +367,12 @@ def file_unlink():
 
 
 @inject.autoparams()
-def _remove_dataset(name, client: LocalClient):
+def _remove_dataset(name, client: LocalClient, datasets_provenance: DatasetsProvenance):
     """Delete a dataset."""
     dataset = client.load_dataset(name=name, strict=True)
     dataset.mutate()
     dataset.to_yaml()
-    client.update_datasets_provenance(dataset, remove=True)
+    datasets_provenance.remove(dataset=dataset, client=client)
 
     client.repo.git.add(dataset.path)
     client.repo.index.commit("renku dataset rm: final mutation")
@@ -801,7 +805,7 @@ def _filter(client: LocalClient, names=None, creators=None, include=None, exclud
 
 
 @inject.autoparams()
-def _tag_dataset(name, tag, description, client: LocalClient, force=False):
+def _tag_dataset(name, tag, description, client: LocalClient, datasets_provenance: DatasetsProvenance, force=False):
     """Creates a new tag for a dataset."""
     dataset = client.load_dataset(name, strict=True)
 
@@ -811,7 +815,7 @@ def _tag_dataset(name, tag, description, client: LocalClient, force=False):
         raise ParameterError(e)
     else:
         dataset.to_yaml()
-        client.update_datasets_provenance(dataset)
+        datasets_provenance.add_or_update(dataset)
 
 
 def tag_dataset():
@@ -821,7 +825,7 @@ def tag_dataset():
 
 
 @inject.autoparams()
-def _remove_dataset_tags(name, tags, client: LocalClient):
+def _remove_dataset_tags(name, tags, client: LocalClient, datasets_provenance: DatasetsProvenance):
     """Removes tags from a dataset."""
     dataset = client.load_dataset(name, strict=True)
 
@@ -831,7 +835,7 @@ def _remove_dataset_tags(name, tags, client: LocalClient):
         raise ParameterError(e)
     else:
         dataset.to_yaml()
-        client.update_datasets_provenance(dataset)
+        datasets_provenance.add_or_update(dataset)
 
 
 def remove_dataset_tags():
@@ -867,7 +871,7 @@ def _prompt_access_token(exporter):
     return communication.prompt(text_prompt, type=str)
 
 
-def _prompt_tag_selection(tags):
+def _prompt_tag_selection(tags) -> Optional[DatasetTag]:
     """Prompt user to chose a tag or <HEAD>."""
     # Prompt user to select a tag to export
     tags = sorted(tags, key=lambda t: t.created)

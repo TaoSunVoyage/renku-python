@@ -20,6 +20,7 @@
 
 from renku.core.incubation.database import Database
 from renku.core.management.command_builder.command import Command, CommandResult, check_finalized
+from renku.core.models.dataset import DatasetsProvenance
 
 
 class DatabaseCommand(Command):
@@ -28,10 +29,11 @@ class DatabaseCommand(Command):
     PRE_ORDER = 4
     POST_ORDER = 5
 
-    def __init__(self, builder: Command, write: bool = False, path: str = None) -> None:
+    def __init__(self, builder: Command, write: bool = False, path: str = None, create: bool = False) -> None:
         self._builder = builder
         self._write = write
         self._path = path
+        self._create = create
 
     def _pre_hook(self, builder: Command, context: dict, *args, **kwargs) -> None:
         """Create a Database singleton."""
@@ -40,9 +42,20 @@ class DatabaseCommand(Command):
 
         client = context["client"]
 
+        # TODO: Remove this block once we switched to use new graph
+        if not client.has_graph_files() and not self._create:
+            from unittest.mock import Mock
+
+            self.database = Mock()
+            context["bindings"][Database] = self.database
+            context["bindings"][DatasetsProvenance] = Mock()
+            return
+
         self.database = Database.from_path(path=self._path or client.database_path)
 
         context["bindings"][Database] = self.database
+
+        context["constructor_bindings"][DatasetsProvenance] = lambda: DatasetsProvenance.from_database(self.database)
 
     def _post_hook(self, builder: Command, context: dict, result: CommandResult, *args, **kwargs) -> None:
         if self._write and not result.error:

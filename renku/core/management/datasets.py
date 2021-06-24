@@ -49,7 +49,7 @@ from renku.core.management.clone import clone
 from renku.core.management.command_builder import inject
 from renku.core.management.command_builder.command import replace_injected_client
 from renku.core.management.config import RENKU_HOME
-from renku.core.models.dataset import DatasetProvenance
+from renku.core.models.dataset import DatasetsProvenance
 from renku.core.models.datasets import (
     Dataset,
     DatasetFile,
@@ -127,24 +127,6 @@ class DatasetsApiMixin(object):
         path = self.path / self.renku_home / self.POINTERS
         path.mkdir(exist_ok=True)
         return path
-
-    @inject.autoparams()
-    def update_datasets_provenance(
-        self, dataset, database: Database, *, remove=False, revision: str = None, date=None, commit_database=True
-    ):
-        """Update datasets provenance for a dataset."""
-        if not self.has_graph_files():
-            return
-
-        datasets_provenance = DatasetProvenance.from_database(database)
-
-        if remove:
-            datasets_provenance.remove_dataset(dataset=dataset, client=self, revision=revision, date=date)
-        else:
-            datasets_provenance.update_dataset(dataset=dataset, client=self, revision=revision, date=date)
-
-        if commit_database:
-            database.commit()
 
     def datasets_from_commit(self, commit=None):
         """Return datasets defined in a commit."""
@@ -244,7 +226,7 @@ class DatasetsApiMixin(object):
     @contextmanager
     def with_dataset_provenance(self, database: Database, *, name=None, create=False):
         """Yield a dataset's metadata from dataset provenance."""
-        datasets_provenance = DatasetProvenance.from_database(database)
+        datasets_provenance = DatasetsProvenance.from_database(database)
         dataset = datasets_provenance.get_by_name(name=name)
         clean_up_required = False
         dataset_ref = None
@@ -1059,7 +1041,8 @@ class DatasetsApiMixin(object):
 
         return updated_files, deleted_files
 
-    def _update_datasets_metadata(self, updated_files, deleted_files, delete):
+    @inject.autoparams()
+    def _update_datasets_metadata(self, updated_files, deleted_files, delete, datasets_provenance: DatasetsProvenance):
         modified_datasets = {}
 
         for file_ in updated_files:
@@ -1076,7 +1059,7 @@ class DatasetsApiMixin(object):
 
         for dataset in modified_datasets.values():
             dataset.to_yaml()
-            self.update_datasets_provenance(dataset)
+            datasets_provenance.add_or_update(dataset)
 
     def update_dataset_git_files(self, files, ref, delete=False):
         """Update files and dataset metadata according to their remotes.
@@ -1201,7 +1184,8 @@ class DatasetsApiMixin(object):
         except GitCommandError:
             return None
 
-    def update_external_files(self, records):
+    @inject.autoparams()
+    def update_external_files(self, records, datasets_provenance: DatasetsProvenance):
         """Update files linked to external storage."""
         updated_files_paths = []
         updated_datasets = {}
@@ -1232,7 +1216,7 @@ class DatasetsApiMixin(object):
                     file_.update_commit(commit)
             dataset.mutate()
             dataset.to_yaml()
-            self.update_datasets_provenance(dataset)
+            datasets_provenance.add_or_update(dataset)
 
     def _update_pointer_file(self, pointer_file_path):
         """Update a pointer file."""
