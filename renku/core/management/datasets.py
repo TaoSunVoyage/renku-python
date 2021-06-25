@@ -1446,7 +1446,6 @@ def _check_url(url):
         if not is_git:
             # NOTE: Check if the url is a redirect.
             url = requests.head(url, allow_redirects=True).url
-            _ = parse.urlparse(url)
     else:
         try:
             Repo(u.path, search_parent_directories=True)
