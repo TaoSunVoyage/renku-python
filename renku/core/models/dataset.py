@@ -27,6 +27,7 @@ from marshmallow import EXCLUDE, pre_dump
 
 from renku.core import errors
 from renku.core.incubation.database import Database, Index, Persistent
+from renku.core.incubation.immutable import Immutable
 from renku.core.management.command_builder.command import inject
 from renku.core.models import datasets as old_datasets
 from renku.core.models.calamus import DateTimeList, JsonLDSchema, Nested, Uri, fields, prov, renku, schema
@@ -72,8 +73,8 @@ class Url:
     def generate_id(url_str, url_id):
         """Generate an identifier for Url."""
         url = url_str or url_id
-        id = urlparse(url)._replace(scheme="").geturl() if url else uuid4().hex
-        id = quote(id, safe="")
+        id = urlparse(url)._replace(scheme="").geturl().strip("/") if url else uuid4().hex
+        id = quote(id, safe="/")
 
         return f"/urls/{id}"
 
@@ -87,8 +88,10 @@ class Url:
             raise NotImplementedError("Either url_id or url_str has to be set")
 
 
-class DatasetTag:
+class DatasetTag(Immutable):
     """Represents a Tag of an instance of a dataset."""
+
+    __slots__ = ("commit", "dataset", "date_created", "description", "id", "name")
 
     def __init__(
         self,
@@ -100,15 +103,17 @@ class DatasetTag:
         id: str = None,
         name: str,
     ):
-        self.commit: str = commit
-        self.dataset = dataset
-        self.date_created: datetime = parse_date(date_created) or local_now()
-        self.description: str = description
-        self.id: str = id
-        self.name: str = name
+        if not id or id.startswith("_:"):
+            id = DatasetTag.generate_id(commit=commit, name=name)
 
-        if not self.id or self.id.startswith("_:"):
-            self.id = DatasetTag.generate_id(commit=self.commit, name=self.name)
+        super().__init__(
+            commit=commit,
+            dataset=dataset,
+            date_created=parse_date(date_created) or local_now(),
+            description=description,
+            id=id,
+            name=name,
+        )
 
     @classmethod
     def from_dataset_tag(cls, tag: Optional[old_datasets.DatasetTag]) -> Optional["DatasetTag"]:
@@ -137,12 +142,14 @@ class DatasetTag:
         return f"/dataset-tags/{name}"
 
 
-class Language:
+class Language(Immutable):
     """Represent a language of an object."""
 
-    def __init__(self, alternate_name: str = None, name: str = None):
-        self.alternate_name: str = alternate_name
-        self.name: str = name
+    __slots__ = ("alternate_name", "id", "name")
+
+    def __init__(self, alternate_name: str = None, id: str = None, name: str = None):
+        id = id or Language.generate_id(name)
+        super().__init__(alternate_name=alternate_name, id=id, name=name)
 
     @classmethod
     def from_language(cls, language: Optional[old_datasets.Language]) -> Optional["Language"]:
@@ -153,15 +160,21 @@ class Language:
         """Convert to an old Language."""
         return old_datasets.Language(alternate_name=self.alternate_name, name=self.name)
 
+    @staticmethod
+    def generate_id(name: str) -> str:
+        """Generate @id field."""
+        name = quote(name, safe="")
+        return f"/languages/{name}"
 
-class ImageObject:
+
+class ImageObject(Immutable):
     """Represents a schema.org `ImageObject`."""
 
+    __slots__ = ("content_url", "id", "position")
+
     def __init__(self, *, content_url: str, position: int, id: str = None):
-        self.content_url: str = content_url
-        self.position: int = position
         # TODO: Remove scheme://hostname from id
-        self.id: str = id
+        super().__init__(content_url=content_url, position=position, id=id)
 
     @classmethod
     def from_image_object(cls, image_object: Optional[old_datasets.ImageObject]) -> Optional["ImageObject"]:
@@ -185,14 +198,18 @@ class ImageObject:
         return bool(urlparse(self.content_url).netloc)
 
 
-class RemoteEntity:
+class RemoteEntity(Immutable):
     """Reference to an Entity in a remote repo."""
 
+    __slots__ = ("commit_sha", "id", "path", "url")
+
     def __init__(self, *, commit_sha: str, id: str = None, path: Union[Path, str], url: str):
-        self.commit_sha: str = commit_sha
-        self.id = id or RemoteEntity.generate_id(commit_sha, path)
-        self.path: str = str(path)
-        self.url = url
+        super().__init__(
+            commit_sha=commit_sha,
+            id=id or RemoteEntity.generate_id(commit_sha, path),
+            path=str(path),
+            url=url,
+        )
 
     @staticmethod
     def generate_id(commit_sha: str, path: Union[Path, str]) -> str:
@@ -224,8 +241,10 @@ class RemoteEntity:
         return old_datasets.DatasetFile(label=label, path=self.path, source=self.url, url=self.url)
 
 
-class DatasetFile:
+class DatasetFile(Immutable):
     """A file in a dataset."""
+
+    __slots__ = ("based_on", "date_added", "date_deleted", "entity", "id", "is_external", "source")
 
     def __init__(
         self,
@@ -240,13 +259,15 @@ class DatasetFile:
     ):
         assert isinstance(entity, Entity), f"Invalid entity type: '{entity}'"
 
-        self.based_on: RemoteEntity = based_on
-        self.date_added: datetime = fix_timezone(date_added) or local_now()
-        self.date_removed: datetime = fix_timezone(date_removed)
-        self.entity: Entity = entity
-        self.id: str = id or DatasetFile.generate_id()
-        self.is_external: bool = is_external
-        self.source: str = str(source)
+        super().__init__(
+            based_on=based_on,
+            date_added=fix_timezone(date_added) or local_now(),
+            date_removed=fix_timezone(date_removed),
+            entity=entity,
+            id=id or DatasetFile.generate_id(),
+            is_external=is_external,
+            source=str(source),
+        )
 
     @classmethod
     def from_path(cls, client, path: Union[str, Path]) -> "DatasetFile":
@@ -526,6 +547,7 @@ class Dataset(Persistent):
             in_language=self.in_language.to_language() if self.in_language else None,
             keywords=self.keywords,
             license=self.license,
+            project=client._project,
             same_as=self.same_as.to_url(client) if self.same_as else None,
             tags=[tag.to_dataset_tag(client) for tag in self.tags],
             title=self.title,

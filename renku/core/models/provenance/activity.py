@@ -25,6 +25,7 @@ from uuid import uuid4
 from marshmallow import EXCLUDE
 
 from renku.core.incubation.database import Persistent
+from renku.core.incubation.immutable import Immutable
 from renku.core.management.command_builder import inject
 from renku.core.models import entities as old_entities
 from renku.core.models.calamus import JsonLDSchema, Nested, fields, oa, prov, renku
@@ -45,13 +46,17 @@ from renku.core.models.workflow.plan import Plan, PlanSchema
 from renku.core.utils.git import get_object_hash
 
 
-class Association:
+class Association(Immutable):
     """Assign responsibility to an agent for an activity."""
 
+    __slots__ = ("agent", "id", "plan")
+
+    agent: Union[Person, SoftwareAgent]
+    id: str
+    plan: Plan
+
     def __init__(self, *, agent: Union[Person, SoftwareAgent] = None, id: str, plan: Plan):
-        self.agent: Union[Person, SoftwareAgent] = agent
-        self.id: str = id
-        self.plan: Plan = plan
+        super().__init__(agent=agent, id=id, plan=plan)
 
     @staticmethod
     def generate_id(activity_id: str) -> str:
@@ -59,12 +64,16 @@ class Association:
         return f"{activity_id}/association"  # TODO: Does it make sense to use plural name here?
 
 
-class Usage:
+class Usage(Immutable):
     """Represent a dependent path."""
 
+    __slots__ = ("entity", "id")
+
+    entity: Union[Collection, Entity]
+    id: str
+
     def __init__(self, *, entity: Union[Collection, Entity], id: str):
-        self.entity: Union[Collection, Entity] = entity
-        self.id: str = id
+        super().__init__(entity=entity, id=id)
 
     @staticmethod
     def generate_id(activity_id: str) -> str:
@@ -72,12 +81,16 @@ class Usage:
         return f"{activity_id}/usages/{uuid4()}"
 
 
-class Generation:
+class Generation(Immutable):
     """Represent an act of generating a path."""
 
+    __slots__ = ("entity", "id")
+
+    entity: Union[Collection, Entity]
+    id: str
+
     def __init__(self, *, entity: Union[Collection, Entity], id: str):
-        self.entity: Union[Collection, Entity] = entity
-        self.id: str = id
+        super().__init__(entity=entity, id=id)
 
     @staticmethod
     def generate_id(activity_id: str) -> str:

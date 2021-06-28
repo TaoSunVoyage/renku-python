@@ -22,20 +22,22 @@ from pathlib import Path
 from typing import List, Union
 from urllib.parse import quote
 
+from renku.core.incubation.immutable import Immutable
 from renku.core.models.calamus import JsonLDSchema, Nested, fields, prov, renku, wfprov
 from renku.core.utils.git import get_object_hash
 
 
-class Entity:
+class Entity(Immutable):
     """Represent a file."""
 
-    def __init__(self, *, checksum: str, id: str = None, path: Union[Path, str]):
+    __slots__ = ("checksum", "id", "path")
+
+    def __init__(self, *, checksum: str, id: str = None, path: Union[Path, str], **kwargs):
         assert id is None or isinstance(id, str)
         assert not os.path.isabs(path), f"Entity is being created with absolute path: '{path}'"
 
-        self.checksum: str = checksum
-        self.id: str = id or Entity.generate_id(checksum, path)
-        self.path: str = str(path)
+        id = id or Entity.generate_id(checksum, path)
+        super().__init__(checksum=checksum, id=id, path=path, **kwargs)
 
     def __eq__(self, other):
         if self is other:
@@ -111,9 +113,11 @@ class Entity:
 class Collection(Entity):
     """Represent a directory with files."""
 
+    __slots__ = "members"
+
     def __init__(self, *, checksum: str, id: str = None, path: Union[Path, str], members: List[Entity] = None):
-        super().__init__(id=id, checksum=checksum, path=path)
-        self.members: List[Entity] = members or []
+        members = tuple(members) if members else ()
+        super().__init__(checksum=checksum, id=id, path=path, members=members)
 
 
 class NewEntitySchema(JsonLDSchema):

@@ -20,6 +20,7 @@
 import datetime
 import hashlib
 import json
+import weakref
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from uuid import uuid4
@@ -31,6 +32,7 @@ from ZODB.utils import z64
 from zope.interface import implementer
 
 from renku.core import errors
+from renku.core.incubation.immutable import Immutable
 
 OID_TYPE = str
 MARKER = object()
@@ -162,6 +164,7 @@ class Database:
         """
         assert isinstance(object, Persistent), f"Cannot add non-Persistent object: '{object}'"
 
+        print("    REGISTER", f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid}")
         if object._p_oid is None:
             object._p_oid = self.generate_oid(object)
 
@@ -171,6 +174,7 @@ class Database:
 
     def get(self, oid: OID_TYPE) -> Persistent:
         """Get the object by oid."""
+        print("GET", oid)
         if oid != Database.ROOT_OID and oid in self._root:  # NOTE: Avoid looping if getting "root"
             return self._root[oid]
 
@@ -179,6 +183,7 @@ class Database:
             return object
 
         data = self._storage.load(filename=self._get_filename_from_oid(oid))
+        print("GET LOAD", data)
         object = self._reader.deserialize(data)
         object._p_changed = 0
         object._p_serial = PERSISTED
@@ -211,21 +216,30 @@ class Database:
 
     def new_ghost(self, oid: OID_TYPE, object: Persistent):
         """Create a new ghost object."""
+        print("NEW-GHOST", f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid} {oid}")
         object._p_jar = self
         self._cache.new_ghost(oid, object)
 
     def setstate(self, object: Persistent):
         """Load the state for a ghost object."""
+        print("        SETSTATE", f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid}")
         data = self._storage.load(filename=self._get_filename_from_oid(object._p_oid))
         self._reader.set_ghost_state(object, data)
         object._p_serial = PERSISTED
 
     def commit(self):
         """Commit modified and new objects."""
+        print("---- COMMIT ----", self)
         while self._objects_to_commit:
             _, object = self._objects_to_commit.popitem()
+            print(
+                "---- COMMIT OBJECT ----",
+                f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid}",
+                b"00000000" if object._p_serial == NEW else object._p_serial,
+            )
             if object._p_changed or object._p_serial == NEW:
                 self._store_object(object)
+        print("---- COMMIT DONE ----")
 
     def _store_object(self, object: Persistent):
         data = self._writer.serialize(object)
@@ -238,6 +252,7 @@ class Database:
 
     def remove_from_cache(self, object: Persistent):
         """Remove an object from cache."""
+        print("REMOVE", f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid}")
         oid = object._p_oid
         self._cache.pop(oid, None)
         self._pre_cache.pop(oid, None)
@@ -441,6 +456,7 @@ class Storage:
 
     def store(self, filename: str, data: Union[Dict, List]):
         """Store object."""
+        print("        STORE", data["@type"], data["@oid"])
         assert isinstance(filename, str)
 
         compressed = len(filename) >= Storage.MIN_COMPRESSED_FILENAME_LENGTH
@@ -457,6 +473,7 @@ class Storage:
 
     def load(self, filename: str):
         """Load data for object with object id oid."""
+        print("        LOAD", filename)
         assert isinstance(filename, str)
 
         compressed = len(filename) >= Storage.MIN_COMPRESSED_FILENAME_LENGTH
@@ -531,9 +548,14 @@ class ObjectWriter:
             return {"@type": get_type_name(object), "@oid": object._p_oid, "@reference": True}
         elif hasattr(object, "__getstate__"):
             state = object.__getstate__()
-            if isinstance(state, dict) and "_id" in state:  # TODO: Remove this once all Renku classes have 'id' field
-                state["id"] = state.pop("_id")
-            return self._serialize_helper(state)
+            state = self._serialize_helper(state)
+            if isinstance(state, dict):
+                if "_id" in state:  # TODO: Remove this once all Renku classes have 'id' field
+                    state["id"] = state.pop("_id")
+            else:
+                state = {"@value": state}
+            state["@type"] = get_type_name(object)
+            return state
         else:
             state = object.__dict__.copy()
             state = self._serialize_helper(state)
@@ -549,6 +571,7 @@ class ObjectReader:
     def __init__(self, database: Database):
         self._classes: Dict[str, type] = {}
         self._database = database
+        self._immutable_objects_cache = weakref.WeakValueDictionary()
 
     def _get_class(self, type_name: str) -> type:
         cls = self._classes.get(type_name)
@@ -652,6 +675,16 @@ class ObjectReader:
                 object.__setstate__(data)
             else:
                 assert isinstance(data, dict)
-                object = cls(**data)
+
+                if issubclass(cls, Immutable):
+                    id = data["id"]
+                    object = self._immutable_objects_cache.get(id)
+                    if object:
+                        return object
+
+                    object = cls(**data)
+                    self._immutable_objects_cache[id] = object
+                else:
+                    object = cls(**data)
 
             return object
