@@ -232,7 +232,7 @@ class DatasetFile:
         *,
         based_on: RemoteEntity = None,
         date_added: datetime = None,
-        date_deleted: datetime = None,
+        date_removed: datetime = None,
         entity: Entity,
         id: str = None,
         is_external: bool = False,
@@ -242,7 +242,7 @@ class DatasetFile:
 
         self.based_on: RemoteEntity = based_on
         self.date_added: datetime = fix_timezone(date_added) or local_now()
-        self.date_deleted: datetime = fix_timezone(date_deleted)
+        self.date_removed: datetime = fix_timezone(date_removed)
         self.entity: Entity = entity
         self.id: str = id or DatasetFile.generate_id()
         self.is_external: bool = is_external
@@ -273,7 +273,7 @@ class DatasetFile:
     def generate_id():
         """Generate an identifier for DatasetFile.
 
-        NOTE: ID should not rely on Entity properties because the same Entity can be added and deleted multiple times.
+        NOTE: ID should not rely on Entity properties because the same Entity can be added and removed multiple times.
         So, it should be marked by different DatasetFiles.
         """
         return f"/dataset-files/{uuid4().hex}"
@@ -286,19 +286,19 @@ class DatasetFile:
         return (
             self.based_on == other.based_on
             and self.date_added == other.date_added
-            and self.date_deleted == other.date_deleted
+            and self.date_removed == other.date_removed
             and self.entity == other.entity
             and self.is_external == other.is_external
             and self.source == other.source
         )
 
-    def delete(self, date: datetime = None):
-        """Mark the file as deleted."""
-        self.date_deleted = fix_timezone(date) or local_now()
+    def remove(self, date: datetime = None):
+        """Mark the file as removed."""
+        self.date_removed = fix_timezone(date) or local_now()
 
-    def is_deleted(self) -> bool:
-        """Return true if dataset is deleted and should not be accessed."""
-        return self.date_deleted is not None
+    def is_removed(self) -> bool:
+        """Return true if dataset is removed and should not be accessed."""
+        return self.date_removed is not None
 
     def to_dataset_file(self, client, revision="HEAD") -> Optional[old_datasets.DatasetFile]:
         """Return an instance of renku.core.models.datasets.DatasetFile at a revision."""
@@ -328,8 +328,8 @@ class Dataset(Persistent):
         name: str,
         creators: List[Person] = None,
         date_created: datetime = None,
-        date_deleted: datetime = None,
         date_published: datetime = None,
+        date_removed: datetime = None,
         derived_from: str = None,
         description: str = None,
         files: List[DatasetFile] = None,
@@ -339,8 +339,7 @@ class Dataset(Persistent):
         in_language: Language = None,
         keywords: List[str] = None,
         license: str = None,
-        original_identifier: str = None,
-        # project=None,  # TODO
+        initial_identifier: str = None,
         same_as: Url = None,
         tags: List[DatasetTag] = None,
         title: str = None,
@@ -356,19 +355,18 @@ class Dataset(Persistent):
 
         self.creators: List[Person] = creators or []
         self.date_created: datetime = fix_timezone(date_created) or local_now()
-        self.date_deleted: datetime = fix_timezone(date_deleted)
         self.date_published: datetime = fix_timezone(date_published)
+        self.date_removed: datetime = fix_timezone(date_removed)
         self.derived_from: str = derived_from
         self.description: str = description
-        """`files` includes existing files and those that have been deleted in the previous version."""
+        """`files` includes existing files and those that have been removed in the previous version."""
         self.files: List[DatasetFile] = files or []
         self.images: List[ImageObject] = images or []
         self.immutable: bool = immutable
         self.in_language: Language = in_language
         self.keywords: List[str] = keywords or []
         self.license: str = license
-        self.original_identifier: str = original_identifier
-        # self.project = project
+        self.initial_identifier: str = initial_identifier
         self.same_as: Url = same_as
         self.tags: List[DatasetTag] = tags or []
         self.title: str = title
@@ -391,8 +389,8 @@ class Dataset(Persistent):
         self = cls(
             creators=dataset.creators,
             date_created=dataset.date_created,
-            date_deleted=None,
             date_published=dataset.date_published,
+            date_removed=None,
             derived_from=cls._convert_derived_from(dataset.derived_from),
             description=dataset.description,
             files=files,
@@ -403,7 +401,7 @@ class Dataset(Persistent):
             keywords=dataset.keywords,
             license=dataset.license,
             name=dataset.name,
-            original_identifier=dataset.original_identifier,
+            initial_identifier=dataset.initial_identifier,
             same_as=Url.from_url(dataset.same_as),
             tags=[DatasetTag.from_dataset_tag(tag) for tag in (dataset.tags or [])],
             title=dataset.title,
@@ -438,33 +436,33 @@ class Dataset(Persistent):
 
         return Dataset.generate_id(identifier=Path(path).name)
 
-    def delete(self, date: datetime = None):
-        """Mark the dataset as deleted."""
-        self.date_deleted = fix_timezone(date) or local_now()
+    def remove(self, date: datetime = None):
+        """Mark the dataset as removed."""
+        self.date_removed = fix_timezone(date) or local_now()
         self._p_changed = True
 
-    def is_deleted(self) -> bool:
-        """Return true if dataset is deleted."""
-        return self.date_deleted is not None
+    def is_removed(self) -> bool:
+        """Return true if dataset is removed."""
+        return self.date_removed is not None
 
     def find_file(self, path: Union[Path, str]) -> Optional[DatasetFile]:
         """Find a file in files container using its relative path."""
         path = str(path)
         for file in self.files:
-            if file.entity.path == path and not file.is_deleted():
+            if file.entity.path == path and not file.is_removed():
                 return file
 
     def copy_from(self, dataset: "Dataset"):
         """Copy metadata from another dataset."""
         assert self.identifier == dataset.identifier, f"Identifiers differ {self.identifier} != {dataset.identifier}"
         assert (
-            self.original_identifier == dataset.original_identifier
-        ), f"Original identifiers differ {self.original_identifier} != {dataset.original_identifier}"
+            self.initial_identifier == dataset.initial_identifier
+        ), f"Initial identifiers differ {self.initial_identifier} != {dataset.initial_identifier}"
 
         self.creators = dataset.creators
         self.date_created = dataset.date_created
-        self.date_deleted = None
         self.date_published = dataset.date_published
+        self.date_removed = None
         self.derived_from = dataset.derived_from
         self.description = dataset.description
         self.files = dataset.files
@@ -481,9 +479,9 @@ class Dataset(Persistent):
         self._p_changed = True
 
     def update_files_from(self, current_files: List[DatasetFile], date: datetime = None):
-        """Check `current_files` to reuse existing entries and mark deleted files."""
-        new_files: Dict[str, DatasetFile] = {f.entity.path: f for f in self.files if not f.is_deleted()}
-        current_files: Dict[str, DatasetFile] = {f.entity.path: f for f in current_files if not f.is_deleted()}
+        """Check `current_files` to reuse existing entries and mark removed files."""
+        new_files: Dict[str, DatasetFile] = {f.entity.path: f for f in self.files if not f.is_removed()}
+        current_files: Dict[str, DatasetFile] = {f.entity.path: f for f in current_files if not f.is_removed()}
 
         files = []
 
@@ -495,10 +493,10 @@ class Dataset(Persistent):
             else:
                 files.append(file)
 
-        # NOTE: Whatever remains in `current_files` are deleted in the newer version
-        for deleted_file in current_files.values():
-            deleted_file.delete(date)
-            files.append(deleted_file)
+        # NOTE: Whatever remains in `current_files` are removed in the newer version
+        for removed_file in current_files.values():
+            removed_file.remove(date)
+            files.append(removed_file)
 
         self.files = files
 
@@ -551,31 +549,36 @@ class Dataset(Persistent):
 class DatasetsProvenance:
     """A set of datasets."""
 
-    def __init__(self, datasets: Index, provenance: Index):
+    def __init__(self, database: Database):
         # A map from name to datasets for current datasets
-        self._datasets: Index = datasets
-        # A map from id to datasets for all current, deleted, and previous datasets versions
-        self._provenance: Index = provenance
-
-    @classmethod
-    def from_database(cls, database: Database) -> "DatasetsProvenance":
-        """Return an instance from a metadata database."""
-        datasets = database["datasets"]
-        provenance = database["datasets-provenance"]
-
-        return DatasetsProvenance(datasets=datasets, provenance=provenance)
+        self._datasets: Index = database["datasets"]
+        # A map from id to datasets that keeps provenance chain tails for all current and removed datasets
+        self._provenance: Index = database["datasets-provenance"]
+        self._database: Database = database
 
     def get_by_id(self, id: str) -> Optional[Dataset]:
-        """Return a dataset by its name."""
-        return self._provenance.get(id)
+        """Return a dataset by its id."""
+        try:
+            object = self._database.get_by_id(id)
+        except errors.ObjectNotFoundError:
+            pass
+        else:
+            assert isinstance(object, Dataset)
+            return object
 
     def get_by_name(self, name: str) -> Optional[Dataset]:
-        """Return a generator that yields datasets by name."""
+        """Return a dataset by its name."""
         return self._datasets.get(name)
 
     def get_provenance(self):
-        """Return the whole provenance for all datasets."""
+        """Return the provenance for all datasets."""
         return self._provenance.values()
+
+    def get_previous_version(self, dataset: Dataset) -> Optional[Dataset]:
+        """Return the previous version of a dataset if any."""
+        if not dataset.derived_from:
+            return
+        return self.get_by_id(dataset.derived_from)
 
     @inject.params(client="LocalClient")
     def add_or_update(
@@ -592,7 +595,7 @@ class DatasetsProvenance:
         current_dataset = self.get_by_name(dataset.name)
 
         if current_dataset:
-            if current_dataset.is_deleted():
+            if current_dataset.is_removed():
                 communication.warn(f"Deleted dataset is being updated `{dataset.identifier}` at revision `{revision}`")
 
             new_dataset.update_files_from(current_dataset.files, date=date)
@@ -603,6 +606,7 @@ class DatasetsProvenance:
                 new_dataset = current_dataset
 
         self._datasets.add(new_dataset)
+        self._provenance.pop(new_dataset.derived_from, None)
         self._provenance.add(new_dataset)
 
     def remove(self, dataset, client, revision=None, date=None):
@@ -612,10 +616,11 @@ class DatasetsProvenance:
 
         if not current_dataset:
             communication.warn(f"Deleting non-existing dataset '{dataset.name}'")
-        elif current_dataset.is_deleted():
-            communication.warn(f"Deleting an already-deleted dataset '{dataset.name}'")
+        elif current_dataset.is_removed():
+            communication.warn(f"Deleting an already-removed dataset '{dataset.name}'")
 
-        new_dataset.delete(date)
+        new_dataset.remove(date)
+        self._provenance.pop(new_dataset.derived_from, None)
         self._provenance.add(new_dataset)
 
 
@@ -629,8 +634,8 @@ class UrlSchema(JsonLDSchema):
         model = Url
         unknown = EXCLUDE
 
-    url = Uri(schema.url, missing=None)
     id = fields.Id(missing=None)
+    url = Uri(schema.url, missing=None)
 
 
 class DatasetTagSchema(JsonLDSchema):
@@ -683,8 +688,8 @@ class ImageObjectSchema(JsonLDSchema):
         model = ImageObject
         unknown = EXCLUDE
 
-    id = fields.Id(missing=None)
     content_url = fields.String(schema.contentUrl)
+    id = fields.Id(missing=None)
     position = fields.Integer(schema.position)
 
 
@@ -716,7 +721,7 @@ class NewDatasetFileSchema(JsonLDSchema):
 
     based_on = Nested(schema.isBasedOn, RemoteEntitySchema, missing=None)
     date_added = DateTimeList(schema.dateCreated, format="iso", extra_formats=("%Y-%m-%d",))
-    date_deleted = fields.DateTime(prov.invalidatedAtTime, missing=None, allow_none=True, format="iso")
+    date_removed = fields.DateTime(prov.invalidatedAtTime, missing=None, format="iso")
     entity = Nested(prov.entity, NewEntitySchema)
     id = fields.Id()
     is_external = fields.Boolean(renku.external, missing=False)
@@ -735,29 +740,22 @@ class NewDatasetSchema(JsonLDSchema):
         unknown = EXCLUDE
 
     creators = Nested(schema.creator, PersonSchema, many=True)
-    date_created = fields.DateTime(
-        schema.dateCreated, missing=None, allow_none=True, format="iso", extra_formats=("%Y-%m-%d",)
-    )
-    date_deleted = fields.DateTime(prov.invalidatedAtTime, missing=None, allow_none=True, format="iso")
+    date_created = fields.DateTime(schema.dateCreated, missing=None, format="iso", extra_formats=("%Y-%m-%d",))
+    date_removed = fields.DateTime(prov.invalidatedAtTime, missing=None, format="iso")
     date_published = fields.DateTime(
-        schema.datePublished,
-        missing=None,
-        allow_none=True,
-        format="%Y-%m-%d",
-        extra_formats=("iso", "%Y-%m-%dT%H:%M:%S"),
+        schema.datePublished, missing=None, format="%Y-%m-%d", extra_formats=("iso", "%Y-%m-%dT%H:%M:%S")
     )
     derived_from = Nested(prov.wasDerivedFrom, UrlSchema, missing=None)
     description = fields.String(schema.description, missing=None)
     files = Nested(schema.hasPart, NewDatasetFileSchema, many=True)
     id = fields.Id(missing=None)
     identifier = fields.String(schema.identifier)
-    images = fields.Nested(schema.image, ImageObjectSchema, missing=None, allow_none=True, many=True)
+    images = fields.Nested(schema.image, ImageObjectSchema, missing=None, many=True)
     in_language = Nested(schema.inLanguage, LanguageSchema, missing=None)
-    keywords = fields.List(schema.keywords, fields.String(), missing=None, allow_none=True)
-    license = Uri(schema.license, missing=None, allow_none=True)
+    keywords = fields.List(schema.keywords, fields.String(), missing=None)
+    license = Uri(schema.license, missing=None)
     name = fields.String(schema.alternateName)
-    original_identifier = fields.String(renku.originalIdentifier)
-    # project = Nested(schema.isPartOf, ProjectSchema, missing=None)
+    initial_identifier = fields.String(renku.originalIdentifier)
     same_as = Nested(schema.sameAs, UrlSchema, missing=None)
     tags = Nested(schema.subjectOf, DatasetTagSchema, many=True)
     title = fields.String(schema.name)

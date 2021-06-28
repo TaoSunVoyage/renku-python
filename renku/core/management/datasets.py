@@ -226,7 +226,7 @@ class DatasetsApiMixin(object):
     @contextmanager
     def with_dataset_provenance(self, database: Database, *, name=None, create=False):
         """Yield a dataset's metadata from dataset provenance."""
-        datasets_provenance = DatasetsProvenance.from_database(database)
+        datasets_provenance = DatasetsProvenance(database)
         dataset = datasets_provenance.get_by_name(name=name)
         clean_up_required = False
         dataset_ref = None

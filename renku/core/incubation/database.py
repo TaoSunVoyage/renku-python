@@ -27,9 +27,10 @@ from uuid import uuid4
 from BTrees.OOBTree import OOBTree
 from persistent import GHOST, UPTODATE, Persistent
 from persistent.interfaces import IPickleCache
-from ZODB.POSException import POSKeyError
 from ZODB.utils import z64
 from zope.interface import implementer
+
+from renku.core import errors
 
 OID_TYPE = str
 MARKER = object()
@@ -138,7 +139,7 @@ class Database:
         if not self._root:
             try:
                 self._root = self.get(Database.ROOT_OID)
-            except POSKeyError:
+            except errors.ObjectNotFoundError:
                 self._root = OOBTree()
                 self._root._p_oid = Database.ROOT_OID
                 self.register(self._root)
@@ -188,6 +189,11 @@ class Database:
         self._pre_cache.pop(oid)
 
         return object
+
+    def get_by_id(self, id: str) -> Persistent:
+        """Return an object by its id."""
+        oid = Database.hash_id(id)
+        return self.get(oid)
 
     def get_cached(self, oid: OID_TYPE) -> Optional[Persistent]:
         """Return an object if it is in the cache or will be committed."""
@@ -462,7 +468,7 @@ class Storage:
             open_func = open
 
         if not path.exists():
-            raise POSKeyError(filename)
+            raise errors.ObjectNotFoundError(filename)
 
         with open_func(path) as file:
             data = json.load(file)

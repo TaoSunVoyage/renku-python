@@ -114,7 +114,7 @@ def _generate_graph(client: LocalClient, database: Database, force=False):
         raise errors.OperationError("Graph metadata exists. Use ``--force`` to regenerate it.")
 
     client.initialize_graph()
-    datasets_provenance = DatasetsProvenance.from_database(database)
+    datasets_provenance = DatasetsProvenance(database)
 
     for n, commit in enumerate(commits, start=1):
         communication.echo(f"Processing commits {n}/{n_commits}", end="\r")
@@ -322,16 +322,16 @@ def _fetch_datasets(revision, paths, deleted_paths, client: LocalClient):
     for path in paths:
         dataset = Dataset.from_yaml(path, client)
         # NOTE: Fixing dataset path after migration
-        original_identifier = Path(dataset.path).name
-        dataset.path = f".renku/datasets/{original_identifier}"
+        initial_identifier = Path(dataset.path).name
+        dataset.path = f".renku/datasets/{initial_identifier}"
         datasets.append(dataset)
 
     deleted_datasets = []
     for path in deleted_paths:
         dataset = Dataset.from_yaml(path, client)
         # NOTE: Fixing dataset path after migration
-        original_identifier = Path(dataset.path).name
-        dataset.path = f".renku/datasets/{original_identifier}"
+        initial_identifier = Path(dataset.path).name
+        dataset.path = f".renku/datasets/{initial_identifier}"
         deleted_datasets.append(dataset)
 
     return datasets, deleted_datasets

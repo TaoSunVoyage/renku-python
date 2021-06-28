@@ -1592,7 +1592,7 @@ def test_datasets_provenance_after_git_update(client_with_new_graph, runner):
     assert 0 == runner.invoke(cli, ["dataset", "update"], catch_exceptions=False).exit_code
 
     current_version = get_datasets_provenance(client_with_new_graph).get_by_name("my-data")
-    assert current_version.identifier != current_version.original_identifier
+    assert current_version.identifier != current_version.initial_identifier
 
 
 @pytest.mark.integration
@@ -1606,4 +1606,4 @@ def test_datasets_provenance_after_external_provider_update(client_with_new_grap
 
     current_version = get_datasets_provenance(client_with_new_graph).get_by_name("my-data")
 
-    assert current_version.identifier != current_version.original_identifier
+    assert current_version.identifier != current_version.initial_identifier

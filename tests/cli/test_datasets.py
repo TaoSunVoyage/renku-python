@@ -1855,9 +1855,10 @@ def test_datasets_provenance_after_edit(runner, client_with_new_graph):
 
     dataset = client_with_new_graph.load_dataset("my-data")
     datasets_provenance = get_datasets_provenance(client_with_new_graph)
-    current_version = datasets_provenance.get_by_id(Dataset.generate_id(dataset.identifier))
-    old_version = datasets_provenance.get_by_id(Dataset.generate_id(dataset.original_identifier))
+    current_version = datasets_provenance.get_by_name("my-data")
+    old_version = datasets_provenance.get_previous_version(current_version)
 
+    assert dataset.identifier == current_version.identifier
     assert current_version.identifier != old_version.identifier
     assert current_version.name == old_version.name
     assert set() == set(old_version.keywords)
@@ -1894,10 +1895,10 @@ def test_datasets_provenance_after_multiple_adds(runner, client_with_new_graph, 
     datasets_provenance = get_datasets_provenance(client_with_new_graph)
     provenance = datasets_provenance.get_provenance()
 
-    assert 2 == len(provenance)
+    assert 1 == len(provenance)
 
     current_version = datasets_provenance.get_by_name("my-data")
-    old_version = next(d for d in provenance if d.identifier != current_version.identifier)
+    old_version = datasets_provenance.get_by_id(current_version.derived_from)
     old_dataset_file_ids = {f.id for f in old_version.files}
 
     path = os.path.join(DATA_DIR, "my-data", "dir1", "file2")
@@ -1915,14 +1916,14 @@ def test_datasets_provenance_after_add_with_overwrite(runner, client_with_new_gr
     datasets_provenance = get_datasets_provenance(client_with_new_graph)
     provenance = datasets_provenance.get_provenance()
 
-    assert 2 == len(provenance)
+    assert 1 == len(provenance)
 
     current_version = datasets_provenance.get_by_name("my-data")
-    old_version = next(d for d in provenance if d.identifier != current_version.identifier)
+    old_version = datasets_provenance.get_by_id(current_version.derived_from)
     old_dataset_file_ids = {f.id for f in old_version.files}
 
     for dataset_file in current_version.files:
-        assert not dataset_file.is_deleted()
+        assert not dataset_file.is_removed()
         # NOTE: DatasetFile should be recreated when adding the same file with the `--overwrite` option
         assert dataset_file.id not in old_dataset_file_ids
 
@@ -1935,33 +1936,39 @@ def test_datasets_provenance_after_file_unlink(runner, client_with_new_graph, di
     dataset = client_with_new_graph.load_dataset("my-data")
     datasets_provenance = get_datasets_provenance(client_with_new_graph)
     current_version = datasets_provenance.get_by_id(Dataset.generate_id(dataset.identifier))
-    old_version = datasets_provenance.get_by_id(Dataset.generate_id(dataset.original_identifier))
+    old_version = datasets_provenance.get_by_id(Dataset.generate_id(dataset.initial_identifier))
     path = os.path.join(DATA_DIR, "my-data", directory_tree.name, "file1")
 
     # NOTE: Files are not removed but they are marked as deleted
     assert 3 == len(current_version.files)
-    existing_files = [f for f in current_version.files if not f.is_deleted()]
+    existing_files = [f for f in current_version.files if not f.is_removed()]
     assert 1 == len(existing_files)
     assert {path} == {f.entity.path for f in existing_files}
     assert 3 == len(old_version.files)
-    assert current_version.identifier != current_version.original_identifier
+    assert current_version.identifier != current_version.initial_identifier
 
 
 def test_datasets_provenance_after_remove(runner, client_with_new_graph, directory_tree):
     """Test datasets provenance is updated after removing a dataset."""
     assert 0 == runner.invoke(cli, ["dataset", "add", "my-data", "-c", str(directory_tree)]).exit_code
+
+    dataset = client_with_new_graph.load_dataset("my-data")
+
     assert 0 == runner.invoke(cli, ["dataset", "rm", "my-data"]).exit_code
 
     datasets_provenance = get_datasets_provenance(client_with_new_graph)
-    dataset = datasets_provenance.get_by_name("my-data")
-
-    assert dataset is None
-
+    current_version = datasets_provenance.get_by_name("my-data")
     provenance = datasets_provenance.get_provenance()
-    last_version = next(d for d in provenance if d.identifier != d.original_identifier)
 
-    assert 2 == len(provenance)
-    assert last_version.is_deleted()
+    assert current_version is None
+    # NOTE: We only keep the tail of provenance chain for each dataset in the provenance
+    assert 1 == len(provenance)
+
+    last_version = next(d for d in provenance)
+
+    assert last_version.identifier != dataset.identifier
+    assert last_version.derived_from == Dataset.generate_id(dataset.identifier)
+    assert last_version.is_removed() is True
 
 
 @pytest.mark.serial
@@ -1975,7 +1982,7 @@ def test_datasets_provenance_after_update(runner, client_with_new_graph, directo
     datasets_provenance = get_datasets_provenance(client_with_new_graph)
     current_version = datasets_provenance.get_by_name("my-data")
 
-    assert current_version.identifier != current_version.original_identifier
+    assert current_version.identifier != current_version.initial_identifier
 
 
 def test_datasets_provenance_after_adding_tag(runner, client_with_new_graph):
@@ -1992,7 +1999,7 @@ def test_datasets_provenance_after_adding_tag(runner, client_with_new_graph):
     commit_sha_after = client_with_new_graph.repo.head.object.hexsha
 
     assert 1 == len(provenance)
-    assert current_version.identifier == current_version.original_identifier
+    assert current_version.identifier == current_version.initial_identifier
     assert commit_sha_before != commit_sha_after
     assert not client_with_new_graph.repo.is_dirty()
 
@@ -2009,7 +2016,7 @@ def test_datasets_provenance_after_removing_tag(runner, client_with_new_graph):
     current_version = datasets_provenance.get_by_name("my-data")
 
     assert 1 == len(provenance)
-    assert current_version.identifier == current_version.original_identifier
+    assert current_version.identifier == current_version.initial_identifier
 
 
 def test_datasets_provenance_multiple(runner, client_with_new_graph, directory_tree):
@@ -2020,20 +2027,26 @@ def test_datasets_provenance_multiple(runner, client_with_new_graph, directory_t
     v2 = client_with_new_graph.load_dataset("my-data")
     assert 0 == runner.invoke(cli, ["dataset", "add", "my-data", str(directory_tree)]).exit_code
     v3 = client_with_new_graph.load_dataset("my-data")
-    assert 0 == runner.invoke(cli, ["dataset", "tag", "my-data", "42.0"]).exit_code
-    v4 = client_with_new_graph.load_dataset("my-data")
     assert 0 == runner.invoke(cli, ["dataset", "unlink", "my-data", "--include", "*/dir1/*"], input="y").exit_code
-    v5 = client_with_new_graph.load_dataset("my-data")
+    v4 = client_with_new_graph.load_dataset("my-data")
 
     datasets_provenance = get_datasets_provenance(client_with_new_graph)
     dataset = client_with_new_graph.load_dataset("my-data")
     dataset_in_provenance = datasets_provenance.get_by_name("my-data")
+    provenance = datasets_provenance.get_provenance()
 
     assert dataset.identifier == dataset_in_provenance.identifier
+    # NOTE: We only keep the tail of provenance chain for each dataset in the provenance
+    assert 1 == len(provenance)
+    tail_dataset = provenance[0]
 
-    ids = {Dataset.generate_id(d.identifier) for d in [v1, v2, v3, v4, v5]}
-
-    assert ids == {d.id for d in datasets_provenance.get_provenance()}
+    assert v4.identifier == tail_dataset.identifier
+    tail_dataset = datasets_provenance.get_previous_version(tail_dataset)
+    assert v3.identifier == tail_dataset.identifier
+    tail_dataset = datasets_provenance.get_previous_version(tail_dataset)
+    assert v2.identifier == tail_dataset.identifier
+    tail_dataset = datasets_provenance.get_previous_version(tail_dataset)
+    assert v1.identifier == tail_dataset.identifier
 
 
 def test_datasets_provenance_add_file(runner, client_with_new_graph, directory_tree):

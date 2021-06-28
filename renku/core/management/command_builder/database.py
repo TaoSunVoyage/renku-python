@@ -55,7 +55,7 @@ class DatabaseCommand(Command):
 
         context["bindings"][Database] = self.database
 
-        context["constructor_bindings"][DatasetsProvenance] = lambda: DatasetsProvenance.from_database(self.database)
+        context["constructor_bindings"][DatasetsProvenance] = lambda: DatasetsProvenance(self.database)
 
     def _post_hook(self, builder: Command, context: dict, result: CommandResult, *args, **kwargs) -> None:
         if self._write and not result.error:
