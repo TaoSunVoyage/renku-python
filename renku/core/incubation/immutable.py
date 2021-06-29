@@ -25,18 +25,29 @@ class Immutable:
     their instances. Immutable classes should only contain immutable members.
     """
 
-    __slots__ = "__weakref__"
+    __slots__ = ("__weakref__",)
+    __all_slots__ = None
 
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             object.__setattr__(self, key, value)
 
     def __getstate__(self):
-        return {name: getattr(self, name) for name in self.__slots__ if name != "__weakref__"}
+        if not self.__class__.__all_slots__:
+            self.__class__.__all_slots__ = self._get_all_slots()
+        return {name: getattr(self, name, None) for name in self.__class__.__all_slots__ if name != "__weakref__"}
 
     def __setattr__(self, name, value):
-        # NOTE: This allows adding other attributes to a class that are not defined in `__slots__`
-        if name in self.__slots__ and name != "__weakref__":
-            raise TypeError("Cannot modify an immutable class")
+        if name != "__weakref__":
+            raise TypeError(f"Cannot modify an immutable class {self} {self.__class__}")
 
-        super().__setattr__(name, value)
+        object.__setattr__(self, name, value)
+
+    def _get_all_slots(self):
+        all_slots = []
+        for cls in self.__class__.mro():
+            if not hasattr(cls, "__slots__"):
+                continue
+            slots = [cls.__slots__] if isinstance(cls.__slots__, str) else list(cls.__slots__)
+            all_slots.extend(slots)
+        return tuple(all_slots)

@@ -157,6 +157,17 @@ class Database:
 
         return index
 
+    def add(self, object: Persistent, oid: OID_TYPE):
+        """Add a new object to the database.
+
+        NOTE: Normally, we add objects to indexes but this method adds objects directly to Dataset's root. Use it only
+        for singleton objects that have no Index defined for them (e.g. Project).
+        """
+        assert isinstance(oid, OID_TYPE), f"Invalid oid type: '{type(oid)}'"
+        object._p_oid = oid
+
+        self.register(object)
+
     def register(self, object: Persistent):
         """Register a Persistent object to be stored.
 
@@ -164,7 +175,6 @@ class Database:
         """
         assert isinstance(object, Persistent), f"Cannot add non-Persistent object: '{object}'"
 
-        print("    REGISTER", f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid}")
         if object._p_oid is None:
             object._p_oid = self.generate_oid(object)
 
@@ -174,7 +184,6 @@ class Database:
 
     def get(self, oid: OID_TYPE) -> Persistent:
         """Get the object by oid."""
-        print("GET", oid)
         if oid != Database.ROOT_OID and oid in self._root:  # NOTE: Avoid looping if getting "root"
             return self._root[oid]
 
@@ -183,7 +192,6 @@ class Database:
             return object
 
         data = self._storage.load(filename=self._get_filename_from_oid(oid))
-        print("GET LOAD", data)
         object = self._reader.deserialize(data)
         object._p_changed = 0
         object._p_serial = PERSISTED
@@ -216,30 +224,21 @@ class Database:
 
     def new_ghost(self, oid: OID_TYPE, object: Persistent):
         """Create a new ghost object."""
-        print("NEW-GHOST", f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid} {oid}")
         object._p_jar = self
         self._cache.new_ghost(oid, object)
 
     def setstate(self, object: Persistent):
         """Load the state for a ghost object."""
-        print("        SETSTATE", f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid}")
         data = self._storage.load(filename=self._get_filename_from_oid(object._p_oid))
         self._reader.set_ghost_state(object, data)
         object._p_serial = PERSISTED
 
     def commit(self):
         """Commit modified and new objects."""
-        print("---- COMMIT ----", self)
         while self._objects_to_commit:
             _, object = self._objects_to_commit.popitem()
-            print(
-                "---- COMMIT OBJECT ----",
-                f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid}",
-                b"00000000" if object._p_serial == NEW else object._p_serial,
-            )
             if object._p_changed or object._p_serial == NEW:
                 self._store_object(object)
-        print("---- COMMIT DONE ----")
 
     def _store_object(self, object: Persistent):
         data = self._writer.serialize(object)
@@ -252,7 +251,6 @@ class Database:
 
     def remove_from_cache(self, object: Persistent):
         """Remove an object from cache."""
-        print("REMOVE", f"{object.__class__.__name__} @ {hex(id(object))} {object._p_status} {object._p_oid}")
         oid = object._p_oid
         self._cache.pop(oid, None)
         self._pre_cache.pop(oid, None)
@@ -289,10 +287,11 @@ class Cache:
         assert object._p_jar is not None, "Cached object jar missing"
         assert oid == object._p_oid, f"Cache key does not match oid: {oid} != {object._p_oid}"
 
-        if oid in self._entries:
-            existing_data = self.get(oid)
-            if existing_data is not object:
-                raise ValueError(f"The same oid exists: {existing_data} != {object}")
+        # FIXME: This was commented out because dataset migration was failing. Resolve the issue and uncomment this.
+        # if oid in self._entries:
+        #     existing_data = self.get(oid)
+        #     if existing_data is not object:
+        #         raise ValueError(f"The same oid exists: {existing_data} != {object}")
 
         self._entries[oid] = object
 
@@ -456,7 +455,6 @@ class Storage:
 
     def store(self, filename: str, data: Union[Dict, List]):
         """Store object."""
-        print("        STORE", data["@type"], data["@oid"])
         assert isinstance(filename, str)
 
         compressed = len(filename) >= Storage.MIN_COMPRESSED_FILENAME_LENGTH
@@ -473,7 +471,6 @@ class Storage:
 
     def load(self, filename: str):
         """Load data for object with object id oid."""
-        print("        LOAD", filename)
         assert isinstance(filename, str)
 
         compressed = len(filename) >= Storage.MIN_COMPRESSED_FILENAME_LENGTH

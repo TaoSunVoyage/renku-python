@@ -24,14 +24,13 @@ from urllib.parse import quote
 from calamus.schema import JsonLDSchema
 from marshmallow import EXCLUDE
 
-from renku.core.incubation.database import Persistent
 from renku.core.models.calamus import StringList, fields, prov, rdfs, schema, wfprov
 from renku.core.models.git import get_user_info
 from renku.core.utils.urls import get_host
 from renku.version import __version__, version_url
 
 
-class Person(Persistent):
+class Person:
     """Represent a person."""
 
     __slots__ = ("affiliation", "alternate_name", "email", "id", "label", "name")
@@ -173,7 +172,7 @@ class PersonSchema(JsonLDSchema):
     name = StringList(schema.name, missing=None)
 
 
-class SoftwareAgent(Persistent):
+class SoftwareAgent:
     """Represent executed software."""
 
     __slots__ = ("id", "label")
