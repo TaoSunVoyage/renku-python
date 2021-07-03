@@ -59,7 +59,7 @@ def get_class(type_name: Optional[str]) -> Optional[type]:
     components = type_name.split(".")
     module_name = components[0]
 
-    if module_name not in ["renku", "datetime", "BTrees", "persistent"]:
+    if module_name not in ["BTrees", "builtins", "datetime", "persistent", "renku"]:
         raise TypeError(f"Objects of type '{type_name}' are not allowed")
 
     module = __import__(module_name)
@@ -503,9 +503,11 @@ class ObjectWriter:
         assert object._p_jar is not None, f"Object is not associated with a Database: '{object}'"
 
         state = object.__getstate__()
+        was_dict = isinstance(state, dict)
         data = self._serialize_helper(state)
+        is_dict = isinstance(data, dict)
 
-        if not isinstance(data, dict):
+        if not is_dict or (is_dict and not was_dict):
             data = {"@value": data}
 
         data["@type"] = get_type_name(object)
@@ -514,19 +516,19 @@ class ObjectWriter:
         return data
 
     def _serialize_helper(self, object):
-        # TODO: Add support for weakref. See persistent.wref.WeakRef
+        # TODO: Raise an error if an unsupported object is being serialized
         if object is None:
             return None
+        elif isinstance(object, (int, float, str, bool)):
+            return object
         elif isinstance(object, list):
             return [self._serialize_helper(value) for value in object]
-        elif isinstance(object, tuple):
-            return tuple([self._serialize_helper(value) for value in object])
         elif isinstance(object, dict):
             for key, value in object.items():
                 object[key] = self._serialize_helper(value)
             return object
-        elif isinstance(object, (int, float, str, bool)):
-            return object
+        elif isinstance(object, tuple):
+            return {"@type": get_type_name(object), "@value": tuple(self._serialize_helper(value) for value in object)}
         elif isinstance(object, datetime.datetime):
             return {"@type": get_type_name(object), "@value": object.isoformat()}
         elif isinstance(object, Index):
@@ -583,9 +585,6 @@ class ObjectReader:
     def set_ghost_state(self, object: Persistent, data: Dict):
         """Set state of a Persistent ghost object."""
         state = self._deserialize_helper(data, create=False)
-        if isinstance(object, OOBTree):
-            state = self._to_tuple(state)
-
         object.__setstate__(state)
 
     def _to_tuple(self, data):
@@ -605,15 +604,12 @@ class ObjectReader:
         return object
 
     def _deserialize_helper(self, data, create=True):
-        # TODO WeakRef
         if data is None:
             return None
         elif isinstance(data, (int, float, str, bool)):
             return data
         elif isinstance(data, list):
             return [self._deserialize_helper(value) for value in data]
-        elif isinstance(data, tuple):
-            return tuple([self._deserialize_helper(value) for value in data])
         else:
             assert isinstance(data, dict), f"Data must be a list: '{type(data)}'"
 
@@ -628,8 +624,11 @@ class ObjectReader:
 
             if issubclass(cls, datetime.datetime):
                 assert create
-                value = data["@value"]
-                return datetime.datetime.fromisoformat(value)
+                data = data["@value"]
+                return datetime.datetime.fromisoformat(data)
+            elif issubclass(cls, tuple):
+                data = data["@value"]
+                return tuple(self._deserialize_helper(value) for value in data)
 
             oid: str = data.pop("@oid", None)
             if oid:
@@ -655,20 +654,13 @@ class ObjectReader:
             if "@value" in data:
                 data = data["@value"]
 
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    data[key] = self._deserialize_helper(value)
-            else:
-                data = self._deserialize_helper(data)
+            data = self._deserialize_helper(data)
 
             if not create:
                 return data
 
             if issubclass(cls, Persistent):
                 object = cls.__new__(cls)
-                if isinstance(object, OOBTree):
-                    data = self._to_tuple(data)
-
                 object.__setstate__(data)
             else:
                 assert isinstance(data, dict)
