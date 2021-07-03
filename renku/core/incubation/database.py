@@ -527,41 +527,31 @@ class ObjectWriter:
             for key, value in object.items():
                 object[key] = self._serialize_helper(value)
             return object
-        elif isinstance(object, tuple):
-            return {"@type": get_type_name(object), "@value": tuple(self._serialize_helper(value) for value in object)}
-        elif isinstance(object, datetime.datetime):
-            return {"@type": get_type_name(object), "@value": object.isoformat()}
         elif isinstance(object, Index):
-            # NOTE: Include Index objects directly to their parent object (i.e. root)
-            assert object._p_oid is not None, f"Index has no oid: {object}"
+            # NOTE: Index objects are not stored as references and are included in their parent object (i.e. root)
             state = object.__getstate__()
             state = self._serialize_helper(state)
-            state["@type"] = get_type_name(object)
-            state["@oid"] = object._p_oid
-            return state
+            return {"@type": get_type_name(object), "@oid": object._p_oid, **state}
         elif isinstance(object, Persistent):
             if not object._p_oid:
                 object._p_oid = Database.generate_oid(object)
             if object._p_state not in [GHOST, UPTODATE] or (object._p_state == UPTODATE and object._p_serial == NEW):
                 self._database.register(object)
             return {"@type": get_type_name(object), "@oid": object._p_oid, "@reference": True}
+        elif isinstance(object, datetime.datetime):
+            value = object.isoformat()
+        elif isinstance(object, tuple):
+            value = tuple(self._serialize_helper(value) for value in object)
         elif hasattr(object, "__getstate__"):
-            state = object.__getstate__()
-            state = self._serialize_helper(state)
-            if isinstance(state, dict):
-                if "_id" in state:  # TODO: Remove this once all Renku classes have 'id' field
-                    state["id"] = state.pop("_id")
-            else:
-                state = {"@value": state}
-            state["@type"] = get_type_name(object)
-            return state
+            value = object.__getstate__()
+            value = self._serialize_helper(value)
+            assert not isinstance(value, dict) or "id" in value, f"Invalid object state: {value} for {object}"
         else:
-            state = object.__dict__.copy()
-            state = self._serialize_helper(state)
-            state["@type"] = get_type_name(object)
-            if "_id" in state:  # TODO: Remove this once all Renku classes have 'id' field
-                state["id"] = state.pop("_id")
-            return state
+            value = object.__dict__.copy()
+            value = self._serialize_helper(value)
+            assert "id" in value, f"Invalid object state: {value} for {object}"
+
+        return {"@type": get_type_name(object), "@value": value}
 
 
 class ObjectReader:
@@ -587,11 +577,6 @@ class ObjectReader:
         state = self._deserialize_helper(data, create=False)
         object.__setstate__(state)
 
-    def _to_tuple(self, data):
-        if isinstance(data, list):
-            return tuple(self._to_tuple(value) for value in data)
-        return data
-
     def deserialize(self, data):
         """Convert JSON to Persistent object."""
         oid = data["@oid"]
@@ -613,13 +598,13 @@ class ObjectReader:
         else:
             assert isinstance(data, dict), f"Data must be a list: '{type(data)}'"
 
-            object_type = data.pop("@type", None)
-            if not object_type:  # NOTE: A normal dict value
+            if "@type" not in data:  # NOTE: A normal dict value
                 assert "@oid" not in data
                 for key, value in data.items():
                     data[key] = self._deserialize_helper(value)
                 return data
 
+            object_type = data.pop("@type")
             cls = self._get_class(object_type)
 
             if issubclass(cls, datetime.datetime):
@@ -635,6 +620,7 @@ class ObjectReader:
                 assert isinstance(oid, str)
 
                 if "@reference" in data and data["@reference"]:  # A reference
+                    assert create, f"Cannot deserialize a reference without creating an instance {data}"
                     object = self._database.get_cached(oid)
                     if object:
                         return object
