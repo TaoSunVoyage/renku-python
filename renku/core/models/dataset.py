@@ -27,7 +27,7 @@ from marshmallow import EXCLUDE, pre_dump
 
 from renku.core import errors
 from renku.core.incubation.database import Database, Index, Persistent
-from renku.core.incubation.immutable import Immutable
+from renku.core.incubation.immutable import Immutable, Slots
 from renku.core.management.command_builder.command import inject
 from renku.core.models import datasets as old_datasets
 from renku.core.models.calamus import DateTimeList, JsonLDSchema, Nested, Uri, fields, prov, renku, schema
@@ -89,7 +89,7 @@ class Url:
             raise NotImplementedError("Either url_id or url_str has to be set")
 
 
-class DatasetTag(Immutable):
+class DatasetTag(Slots):
     """Represents a Tag of an instance of a dataset."""
 
     __slots__ = ("commit", "dataset", "date_created", "description", "id", "name")
@@ -146,7 +146,7 @@ class DatasetTag(Immutable):
 class Language(Immutable):
     """Represent a language of an object."""
 
-    __slots__ = ("alternate_name", "id", "name")
+    __slots__ = ("alternate_name", "name")
 
     def __init__(self, alternate_name: str = None, id: str = None, name: str = None):
         id = id or Language.generate_id(name)
@@ -168,7 +168,7 @@ class Language(Immutable):
         return f"/languages/{name}"
 
 
-class ImageObject(Immutable):
+class ImageObject(Slots):
     """Represents a schema.org `ImageObject`."""
 
     __slots__ = ("content_url", "id", "position")
@@ -199,7 +199,7 @@ class ImageObject(Immutable):
         return bool(urlparse(self.content_url).netloc)
 
 
-class RemoteEntity(Immutable):
+class RemoteEntity(Slots):
     """Reference to an Entity in a remote repo."""
 
     __slots__ = ("commit_sha", "id", "path", "url")
@@ -242,7 +242,7 @@ class RemoteEntity(Immutable):
         return old_datasets.DatasetFile(label=label, path=self.path, source=self.url, url=self.url)
 
 
-class DatasetFile(Immutable):
+class DatasetFile(Slots):
     """A file in a dataset."""
 
     __slots__ = ("based_on", "date_added", "date_removed", "entity", "id", "is_external", "source")
@@ -321,9 +321,9 @@ class DatasetFile(Immutable):
         )
 
     def remove(self, date: datetime = None):
-        """Mark the file as removed."""
+        """Create a new instance and mark it as removed."""
         date_removed = fix_timezone(date) or local_now()
-        object.__setattr__(self, "date_removed", date_removed)
+        self.date_removed = date_removed
 
     def is_removed(self) -> bool:
         """Return true if dataset is removed and should not be accessed."""

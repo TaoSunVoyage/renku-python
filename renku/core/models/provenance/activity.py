@@ -63,7 +63,7 @@ class Association:
 class Usage(Immutable):
     """Represent a dependent path."""
 
-    __slots__ = ("entity", "id")
+    __slots__ = ("entity",)
 
     entity: Union[Collection, Entity]
     id: str
@@ -80,7 +80,7 @@ class Usage(Immutable):
 class Generation(Immutable):
     """Represent an act of generating a path."""
 
-    __slots__ = ("entity", "id")
+    __slots__ = ("entity",)
 
     entity: Union[Collection, Entity]
     id: str
